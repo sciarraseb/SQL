@@ -1,0 +1,220 @@
+---
+title: "Chapter 2: Query Primer"
+header-includes:
+   - \usepackage{nccmath}
+   - \usepackage{caption}
+   - \usepackage{longtable}
+   - \usepackage{setspace}
+   - \usepackage{pdflscape}
+   - \usepackage{booktabs}
+   - \usepackage{longtable}
+   - \usepackage{array}
+   - \usepackage{multirow}
+   - \usepackage{wrapfig}
+   - \usepackage{float}
+   - \usepackage{colortbl}
+   - \usepackage{pdflscape}
+   - \usepackage{tabu}
+   - \usepackage{threeparttable}
+   - \usepackage{threeparttablex}
+   - \usepackage[normalem]{ulem}
+   - \usepackage{makecell}
+   - \usepackage{xcolor}
+   - \usepackage{amsthm}
+   - \newcommand{\blandscape}{\begin{landscape}}
+   - \newcommand{\elandscape}{\end{landscape}}
+   - \usepackage{upgreek}  #required for non-italicized Greek letters
+   - \usepackage{subcaption}
+   
+      #- \captionsetup[table]{textfont={it}, labelfont={bf}, singlelinecheck=false, labelsep=newline}
+   - \captionsetup[figure]{labelfont={normalfont, bf}, singlelinecheck=false, labelsep=newline}
+   
+   - \DeclareCaptionFont{figCaptionFont}{\fontfamily{phv}} #sets caption font to sans serif font of Helvetica 
+   - \DeclareCaptionFont{figCaptionSize}{\footnotesize} #set caption font size to footnote 
+   - \DeclareCaptionFont{figCaptionStyle}{\textup}  #set caption font to non-italicized font  
+   - \DeclareCaptionLabelSeparator{captionSep}{\newline\newline} #separates figure label and figure title with required white space
+   - \captionsetup[figure]{font = {figCaptionFont,figCaptionSize, figCaptionStyle}, labelsep = captionSep,  justification=justified}
+
+#setup for tables
+   - \captionsetup[table]{font = {figCaptionFont,figCaptionSize,figCaptionStyle}, labelfont={bf}, labelsep=captionSep, justification = raggedright, margin = {0cm,0cm}}
+   - \setlength\parindent{24pt}
+   
+format: "pandoc"
+output: pdf_document
+---
+
+```{r setup, include=F}
+knitr::opts_knit$set(root.dir = '~/Desktop/Datacamp/SQL')
+
+library(easypackages)
+packages_to_load <- c('tidyverse', 'RSQLite', 'dbplyr', 'DBI', 'odbc', 'RMySQL', 'reticulate', 'kableExtra', 'knitr', 'magick')
+packages(packages_to_load)
+
+reticulate::use_python(python = "/usr/local/msql/bin/")
+knitr::knit_engines$set(python.reticulate = FALSE)
+```
+
+# Chapter 2: Query primer 
+## Query mechanics
+
+When connecting to a databse, a connection ID is issued after a connection is made. This ID number will be useful in instances where errors are incurred and help is needed from a 
+database administrator. This can be accessed using `dbGetInto()`. Like the primary key for any table in a relational databae management system, the connection ID of a MySQL server is 
+generated in increasing order (beginning from 1). 
+
+```{r connection_mechanics, echo=F}
+conn_mysql <- dbConnect(drv = MySQL(), user = 'root', port = 3306, dbname = 'sakila', password = 'tiramisu')
+DBI::dbGetInfo(dbObj = conn_mysql)$threadId #connection ID
+```
+
+```{r query_info, echo=F}
+query_df <- dbGetQuery(conn = conn_mysql, statement = "SELECT * FROM CATEGORY")
+dbGetQuery(conn = conn_mysql, statement = "SELECT version(), user(), database()")
+```
+
+Some notes on the following queries: 
+
+1) Using `DISTINCT` to check that no duplicates exist in a result set works, but is computationally taxing with larger data sets. 
+
+```{r query_info, echo=F}
+#create new columns and give them aliases (AS)
+alias_df <- dbGetQuery(conn = conn_mysql, 
+statement = "SELECT language_id,
+'COMMON' language_usage, 
+language_id * 3.14159 AS lang_pi_value
+FROM language")
+
+#remove duplication (DISTINCT)
+distinct_df <- dbGetQuery(conn = conn_mysql, 
+statement = "SELECT DISTINCT actor_id FROM film_actor ORDER BY actor_id")
+```
+
+In addition to accessing data from permanent tables (i.e., created with `CREATE`), the `FROM` clause can be used to access data from **derived tables** (i.e., tables in temporary memory),
+**temporary tables**(tables created during the session that disappear after the session is closed), and **virtual tables** (i.e., created with `CREATE VIEW` [similar to using `View()` in
+R]). The first query uses the `FROM` clause to access data from the `cust` derived table and then concatenates the first and last names from the derived table. The second query creates a
+temporary table using `CREATE TEMPORARY`. The third query creates a virtual table that has no associated data and is stored in the data dictionary. 
+
+```{r from_clause, echo=F}
+#derived (sub-query) tables
+derived_query_df <- dbGetQuery(conn = conn_mysql, statement = "SELECT CONCAT (cust.first_name, ',', cust.last_name) AS full_name FROM
+(SELECT first_name, last_name, email FROM customer
+WHERE first_name = 'JESSIE') cust")
+
+#temporary table; note that by loading the temporary table into a dataframe in R, the data has been loaded into the temporary memory of the computer
+dbExecute(conn = conn_mysql, 
+statement = "CREATE TEMPORARY TABLE actors_j
+(actor_id smallint(5),
+first_name varchar(45),
+last_name varchar(45))")
+
+##insert rows from actor table into temporary table
+dbExecute(conn = conn_mysql, 
+statement = "INSERT INTO actors_j
+(SELECT actor_id, first_name, last_name 
+FROM actor
+WHERE last_name LIKE 'J%')")
+
+temporary_query_df <- dbGetQuery(conn = conn_mysql, statement = "SELECT * FROM actors_j")
+rm(temporary_query_df) #ensures dataframe is removed from temporary memory of computer 
+
+#virtual table; no result set emerges
+dbExecute(conn = conn_mysql, statement = "CREATE VIEW cust_vw AS
+SELECT customer_id, first_name, last_name, active
+FROM customer")
+
+#use FROM to view contents of cust_vw
+virtual_query_df <- dbGetQuery(conn = conn_mysql, statement = "SELECT first_name, last_name FROM cust_vw WHERE active = 0")
+rm(virtual_query_df)
+```
+
+### Table links 
+
+When selecting columns from two or more tables, each column should be prefixed with the table name. The query below finds the customers who rented a DVD on June 14, 2005. The `INNER JOIN`clause is used to select rows with customer ID values in both tables. Because table names are repeated, it is efficient to alias table names. 
+
+```{r table_link_ex, echo=F}
+#table link; no table aliasing
+df_no_aliasing <- dbGetQuery(conn = conn_mysql, 
+           statement = "SELECT customer.first_name, customer.last_name, TIME(rental.rental_date) rental_time
+           FROM customer
+           INNER JOIN rental
+           ON customer.customer_id = rental.customer_id
+           WHERE date(rental.rental_date) = '2005-06-14'")
+
+#table link; table aliasing
+df_aliasing <- dbGetQuery(conn = conn_mysql, 
+           statement = "SELECT c.first_name, c.last_name, TIME(r.rental_date) rental_time
+FROM customer AS c
+INNER JOIN rental AS r
+ON c.customer_id = r.customer_id
+WHERE date(r.rental_date) = '2005-06-14'")
+
+all.equal(df_no_aliasing, df_aliasing) #TRUE
+rm(df_no_aliasing, df_aliasing)
+
+
+```
+## The WHERE clause
+
+## The GROUP BY and HAVING clauses
+
+The `GROUP BY` clauses works just like the `dplyr::group_by()` and the `HAVING` clause works just like `dplyr::filter()`. The query below counts the number of rentals per customer and
+only returns customers who have rented from than 40 films. 
+```{r aggregating_data, echo=F}
+aggregate_df <- dbGetQuery(conn = conn_mysql, 
+                           statement = "SELECT c.first_name, c.last_name, count(*) AS num_films_rented
+                           FROM customer AS c
+                           INNER JOIN rental AS R 
+                           ON c.customer_id = r.customer_id
+                           GROUP BY c.first_name, c.last_name
+                           HAVING num_films_rented >= 40")
+rm(aggregate_df)
+
+```
+
+
+## The ORDER BY clause 
+
+Note the nomenclature for ordering columns in opposite orders. 
+```{r ordering_data, echo=F}
+dbGetQuery(conn = conn_mysql, 
+                           statement = "SELECT c.first_name, c.last_name, count(*) AS num_films_rented
+                           FROM customer AS c
+                           INNER JOIN rental AS R 
+                           ON c.customer_id = r.customer_id
+                           GROUP BY c.first_name, c.last_name
+                           HAVING num_films_rented >= 40 
+                           ORDER BY last_name DESC, num_films_rented ASC")
+rm(ordered_df)
+```
+
+## Exercises
+
+```{r exercise_queries, echo=F}
+#1. Retrieve the actor ID, first name, and last name for all actors. Sort by last name and then by first name.
+dbGetQuery(conn = conn_mysql, 
+           statement = 'SELECT actor_id, first_name, last_name 
+           FROM actor 
+           ORDER BY last_name, first_name
+           ')
+
+#2. Retrieve the actor ID, first name, and last name for all actors whose last name equals 'WILLIAMS' or 'DAVIS'. 
+##this can be achieved using WHERE or HAVING
+dbGetQuery(conn = conn_mysql, 
+           statement = "SELECT actor_id, first_name, last_name 
+           FROM actor 
+           WHERE last_name = 'Williams' OR last_name = 'Davis'")
+
+#3. Write a query against the rental table that returns the IDs of the customers who rented a film on July 5, 2005 (use the rental.rental_date column, and you can use the date() function to ignore the time component). Include a single row for each distinct customer ID.
+dbListFields(conn = conn_mysql, name = 'rental')
+dbGetQuery(conn = conn_mysql, 
+           statement = "SELECT DISTINCT(c.customer_id), c.first_name, c.last_name 
+           FROM customer AS c
+           INNER JOIN rental AS r
+           ON c.customer_id = r.customer_id
+           WHERE date(r.rental_date)  = '2005-07-05'")
+
+#more efficient query if you just want to get the number of unique customers and not any identifying information 
+dbGetQuery(conn = conn_mysql, 
+           statement = "SELECT DISTINCT(customer_id)
+           FROM rental 
+           WHERE date(rental_date)  = '2005-07-05'")
+```

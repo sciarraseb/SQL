@@ -1,0 +1,234 @@
+---
+title: "Chapter 4: Filtering"
+header-includes:
+   - \usepackage{nccmath}
+   - \usepackage{caption}
+   - \usepackage{longtable}
+   - \usepackage{setspace}
+   - \usepackage{pdflscape}
+   - \usepackage{booktabs}
+   - \usepackage{longtable}
+   - \usepackage{array}
+   - \usepackage{multirow}
+   - \usepackage{wrapfig}
+   - \usepackage{float}
+   - \usepackage{colortbl}
+   - \usepackage{pdflscape}
+   - \usepackage{tabu}
+   - \usepackage{threeparttable}
+   - \usepackage{threeparttablex}
+   - \usepackage[normalem]{ulem}
+   - \usepackage{makecell}
+   - \usepackage{xcolor}
+   - \usepackage{amsthm}
+   - \newcommand{\blandscape}{\begin{landscape}}
+   - \newcommand{\elandscape}{\end{landscape}}
+   - \usepackage{upgreek}  #required for non-italicized Greek letters
+   - \usepackage{subcaption}
+   
+      #- \captionsetup[table]{textfont={it}, labelfont={bf}, singlelinecheck=false, labelsep=newline}
+   - \captionsetup[figure]{labelfont={normalfont, bf}, singlelinecheck=false, labelsep=newline}
+   
+   - \DeclareCaptionFont{figCaptionFont}{\fontfamily{phv}} #sets caption font to sans serif font of Helvetica 
+   - \DeclareCaptionFont{figCaptionSize}{\footnotesize} #set caption font size to footnote 
+   - \DeclareCaptionFont{figCaptionStyle}{\textup}  #set caption font to non-italicized font  
+   - \DeclareCaptionLabelSeparator{captionSep}{\newline\newline} #separates figure label and figure title with required white space
+   - \captionsetup[figure]{font = {figCaptionFont,figCaptionSize, figCaptionStyle}, labelsep = captionSep,  justification=justified}
+
+#setup for tables
+   - \captionsetup[table]{font = {figCaptionFont,figCaptionSize,figCaptionStyle}, labelfont={bf}, labelsep=captionSep, justification = raggedright, margin = {0cm,0cm}}
+   - \setlength\parindent{24pt}
+   
+format: "pandoc"
+output: pdf_document
+---
+
+```{r setup, include=F}
+knitr::opts_knit$set(root.dir = '~/Desktop/Datacamp/SQL')
+
+library(easypackages)
+packages_to_load <- c('tidyverse', 'RSQLite', 'dbplyr', 'DBI', 'odbc', 'RMySQL', 'reticulate', 'kableExtra', 'knitr', 'magick')
+packages(packages_to_load)
+
+reticulate::use_python(python = "/usr/local/msql/bin/")
+knitr::knit_engines$set(python.reticulate = FALSE)
+```
+
+# Chapter 4: Filtering
+## Filtering for rows that do not match a condition
+
+Rows of tables can be filtered based on whether they do not match a condition using the following three methods:
+
+1) `NOT` clause
+2) `<>`
+3) `!=`
+
+```{r anti_match_filter, echo=F}
+anti_match_not_df <- dbGetQuery(conn = conn_mysql, 
+           statement = "SELECT first_name, last_name 
+           FROM customer 
+           WHERE NOT (first_name = 'Steven' AND last_name = 'Young')
+           ORDER BY first_name ASC
+           LIMIT 10")
+
+anti_match_sign_df <- dbGetQuery(conn = conn_mysql, 
+           statement = "SELECT first_name, last_name 
+           FROM customer 
+           WHERE first_name <> 'Steven' AND last_name <> 'Young'
+           ORDER BY first_name ASC
+           LIMIT 10")
+
+anti_match_not_equal_df <- dbGetQuery(conn = conn_mysql, 
+           statement = "SELECT first_name, last_name 
+           FROM customer 
+           WHERE first_name != 'Steven' AND last_name != 'Young'
+           ORDER BY first_name ASC
+           LIMIT 10")
+
+all_equal(anti_match_not_df, anti_match_sign_df) #TRUE
+```
+
+
+## Delete rows using filter conditions
+
+Note that committing these queries will permanently alter the data set and so the default auto-commit mode of the MySQL server should be changed so that these modifications can be 
+undone. 
+
+```{r delete_rows, echo=F}
+delete_query <- 'DELETE FROM rental
+WHERE year(rental_date) <> 2005 AND year(rental_date) <> 2006'
+```
+
+##The BETWEEN operator
+
+Note that the lower limit should be specified first and the upper limit should be specified second. Also note that the `BETWEEN` operator includes values that match the the upper and
+lower limits as valid. When working with dates, the inclusive nature of the `BETWEEN` operator is unintuitive. For example, to select films rented on either June 14 or June 15, the 
+query must state `2005-06-14` as the lower limit and `2005-06-16` as the upper limit because, by default, dates begin on the first minute of the day (i.e., midnight). The `BETWEEN` operator can be used to specify ranges of dates, numbers, and strings. 
+
+```{r between_operator, echo=F}
+#date range
+dbGetQuery(conn = conn_mysql, 
+           statement = "SELECT customer_id, rental_date 
+           FROM rental 
+           WHERE rental_date BETWEEN '2005-06-14' AND '2005-06-16'
+           LIMIT 10")
+
+#string range 
+dbGetQuery(conn = conn_mysql, 
+           statement = "SELECT last_name, first_name 
+           FROM customer 
+           WHERE first_name BETWEEN 'Fa' AND 'Fr'
+           LIMIT 10")
+
+#numeric range
+dbGetQuery(conn = conn_mysql, 
+           statement = "SELECT customer_id, payment_date, amount
+           FROM payment 
+           WHERE amount BETWEEN 10.0 AND 11.99
+           LIMIT 10")
+```
+
+### The IN operator
+
+The `IN` operator is an efficient way to match to multiple conditions and can also be used to filter subqueries and be used in conjunction with the `IN` operator. The 
+
+```{r in_operator, echo=F}
+#matching multiple conditions 
+dbGetQuery(conn = conn_mysql, 
+           statement =  "SELECT title, rating
+           FROM film
+           WHERE rating IN ('G','PG')
+           LIMIT 10")
+
+#filtering a subquery; 
+dbGetQuery(conn = conn_mysql, 
+           statement = "SELECT title, rating 
+           FROM film 
+           WHERE rating IN (SELECT rating 
+               FROM film
+               WHERE title LIKE '%Pet')
+           LIMIT 10")
+
+#NOT IN query 
+dbGetQuery(conn = conn_mysql, 
+           statement = "SELECT title, rating
+           FROM film 
+           WHERE rating NOT IN ('PG-13', 'R', 'NC-17')
+           LIMIT 10")
+```
+
+## Matching conditions
+
+Wildcard characters can be used in queries to filter for the several below components:
+
+* Strings beginning/ending with a certain character or substring. 
+* Strings containing character/substring. 
+* Strings with a specific format.
+
+\noindent
+Regular expressions provide the most flexibility for filtering rows. 
+```{r matching_conditions, echo=F}
+#string with a specific format
+dbGetQuery(conn = conn_mysql, 
+           statement = "SELECT last_name, first_name 
+           FROM customer 
+           WHERE last_name LIKE '_A_T%S'")
+
+#regular expression that finds people with last names beginning with either Q or Y
+dbGetQuery(conn = conn_mysql, 
+           statement = "SELECT last_name, first_name 
+           FROM customer 
+           WHERE last_name REGEXP '^[QY]'")
+
+```
+
+## NULL values
+
+NULL values are used in instances when values are not applicable (e.g., employee ID value for a transaction that occurred at an ATM), values that are not yet known (e.g., return
+date for a film), and when values are undefined (e.g., an account that is created for a product that has not yet been added to the database). NULL values behave differently from other 
+values in the following ways:
+
+1) An expression can never equal null; they can only *be* null (which is tested with `IS NULL`). 
+2) Two nulls are never equal to each other. 
+
+```{r null_queries, echo=F}
+dbGetQuery(conn = conn_mysql, 
+           statement = "SELECT rental_id, customer_id
+           FROM rental 
+           WHERE return_date IS NULL
+           LIMIT 10")
+
+#find all rentals that were returned outside of May-August 2005 and that were not returned outside of this period
+dbGetQuery(conn = conn_mysql,
+           statement = "SELECT rental_id, customer_id
+           FROM rental 
+           WHERE return_date NOT BETWEEN '2005-05-01' AND '2005-09-01'
+           OR return_date IS NULL
+           LIMIT 10")
+```
+
+## Practice
+
+```{r filtering_practice, echo=F}
+#Q1
+dbGetQuery(con = conn_mysql, 
+statement = "SELECT payment_id, customer_id, amount, date(payment_date)
+FROM payment 
+WHERE payment_id BETWEEN 101 AND 120 AND
+(amount > 8 OR date(payment_date) = '2005-08-23')")
+
+#Q3: Construct a query that retrieves all rows from the payments table where the amount is either 1.98, 7.98, or 9.98.
+dbGetQuery(conn = conn_mysql, 
+           statement = "SELECT payment_id, amount, date(payment_date)
+           FROM payment
+           WHERE amount IN (1.98, 7.98, 9.98)")
+
+#Q4. Construct a query that finds all customers whose last name contains an A in the second position and a W anywhere after the A.
+##Note that % includes any number of characters (including zero).
+dbListTables(conn = conn_mysql)
+dbGetQuery(conn = conn_mysql, 
+           statement = "SELECT customer_id, first_name, last_name 
+           FROM customer 
+           WHERE last_name LIKE '_A%W%'")
+```
+

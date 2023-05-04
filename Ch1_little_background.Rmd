@@ -1,0 +1,313 @@
+---
+title: "Chapter 1: A Little Background"
+header-includes:
+   - \usepackage{nccmath}
+   - \usepackage{caption}
+   - \usepackage{longtable}
+   - \usepackage{setspace}
+   - \usepackage{pdflscape}
+   - \usepackage{booktabs}
+   - \usepackage{longtable}
+   - \usepackage{array}
+   - \usepackage{multirow}
+   - \usepackage{wrapfig}
+   - \usepackage{float}
+   - \usepackage{colortbl}
+   - \usepackage{pdflscape}
+   - \usepackage{tabu}
+   - \usepackage{threeparttable}
+   - \usepackage{threeparttablex}
+   - \usepackage[normalem]{ulem}
+   - \usepackage{makecell}
+   - \usepackage{xcolor}
+   - \usepackage{amsthm}
+   - \newcommand{\blandscape}{\begin{landscape}}
+   - \newcommand{\elandscape}{\end{landscape}}
+   - \usepackage{upgreek}  #required for non-italicized Greek letters
+   - \usepackage{subcaption}
+   
+      #- \captionsetup[table]{textfont={it}, labelfont={bf}, singlelinecheck=false, labelsep=newline}
+   - \captionsetup[figure]{labelfont={normalfont, bf}, singlelinecheck=false, labelsep=newline}
+   
+   - \DeclareCaptionFont{figCaptionFont}{\fontfamily{phv}} #sets caption font to sans serif font of Helvetica 
+   - \DeclareCaptionFont{figCaptionSize}{\footnotesize} #set caption font size to footnote 
+   - \DeclareCaptionFont{figCaptionStyle}{\textup}  #set caption font to non-italicized font  
+   - \DeclareCaptionLabelSeparator{captionSep}{\newline\newline} #separates figure label and figure title with required white space
+   - \captionsetup[figure]{font = {figCaptionFont,figCaptionSize, figCaptionStyle}, labelsep = captionSep,  justification=justified}
+
+#setup for tables
+   - \captionsetup[table]{font = {figCaptionFont,figCaptionSize,figCaptionStyle}, labelfont={bf}, labelsep=captionSep, justification = raggedright, margin = {0cm,0cm}}
+   - \setlength\parindent{24pt}
+   
+format: "pandoc"
+output: pdf_document
+---
+
+```{r setup, include=F}
+knitr::opts_knit$set(root.dir = '~/Desktop/Datacamp/SQL')
+
+library(easypackages)
+packages_to_load <- c('tidyverse', 'RSQLite', 'dbplyr', 'DBI', 'odbc', 'RMySQL', 'reticulate', 'kableExtra', 'knitr', 'magick')
+packages(packages_to_load)
+
+reticulate::use_python(python = "/usr/local/msql/bin/")
+knitr::knit_engines$set(python.reticulate = FALSE)
+```
+
+# Chapter 1: Introduction to relational database management systems
+## Why use relational database management systems?
+
+Relational database management systems (RDBMS) provide an efficient framework for storing and analyzing data for two reasons. First, and in contrast to typical analytical softwares that
+store data in the computer's temporary memory (i.e., random access memory), RDBSMs store data on the hard disk of a computer, thus saving performance for focal analyses. When using
+RDBSMs, data are only ever stored in the computer's temporary memory when queried. Because data are stored in the hard disk and the storage capacity of the hard disk of any computer far
+exceeds that of the temporary memory, RDBSMs allow users to work with very large data sets.
+
+Second, data storage in RDBMSs. follows an efficient framework. Before explaining the framework used for data storage in RDBMSs., consider a traditional method of storing data whereby
+all information is stored in one table. Furthermore, consider a situation where a bank stores data about its customers, their accounts, and transactions into and out of their accounts.
+The bank's data can be conceptualized as a hierarchy, with each customer having several accounts, and each account having several logged transactions. To store customer data in one large
+data set, the information needs to be stored at its lowest level (i.e., transaction level). Table \@ref(tab:entire-dataset} below show what such a data set would like. Importantly, many
+pieces of information are repeated the rows. If this format of storing data were adopted for all the bank's customers, it becomes clear that, with the large amount of redundant
+information, the data set will occupy more space in the hard disk than it needs to. 
+
+\blandscape
+```{r entire-dataset, echo=F}
+entire_dataset <- data.frame('txn_id' = c(978, 979, 980, 981, 982, 983, 984), 
+                            'account_id' = c(103, 103, 104, 105, 105, 105, 106), 
+                            'cus_id' = c(1, 1, 1, 2, 2, 2, 2  ), 
+                            'fname' = c('George', 'George', 'George', 'Sue', 'Sue','Sue','Sue'), 
+                            'lname' = c('Blake', 'Blake', 'Blake', 'Smith', 'Smith','Smith','Smith'),
+                            'txn_type_cd' = c('DBT', 'CDT', 'DBT', 'DBT', 'CDT', 'CDT', 'DBT'),
+                            'amount' = c(100, 25, 250, 1000, 138.50, 77.86, 500.00 ), 
+                            'date' = as.Date(c('2004-01-22','2004-02-05', '2004-03-09','2004-03-25', '2004-04-02','2004-04-04', '2004-03-27')),
+                            'name' = c('Checking', 'Checking', 'Savings', 'Checking', 'Checking', 'Checking', 'Money market'), 
+                            'balance' = c(75, 75, 250, 783.64, 783.64, 783.64, 500), check.names = F)
+
+kbl(entire_dataset, booktabs = TRUE, format = 'latex', linesep = '',
+      align = 'l', 
+      caption = 'Example of Table Storing Complete Dataset', 
+    escape=T) %>%
+   kable_styling(full_width = T, latex_options= c('hold_position'), position = 'left', font_size = 10)
+```
+\elandscape
+
+To efficiently store data, RDBMSs. eliminates storing redundant information. RDBMSs. follow the **relational model** of data storage, which stores data in multiple tables. The number
+of tables is determined by the number of entities (customers, accounts, products, and transactions), as shown in Figure \@ref(fig:relationModel). Each table in Figure
+\@ref(fig:relationModel) has a set of identifier columns or **primary keys** that uniquely identify each row as (`cust_id, account_id, product_cd,`and `txn_id`). Importantly, primary 
+keys should never be allowed to change because it would cause tables to become obsolete or, even worse, inaccurate. As an example, consider the consequences of George Blake's ID value 
+changing to 11 and how that would cause the first two rows of the `Account` table to become meaningless because it would be impossible to tell how they referred to. Because primary keys
+never change, they are the only columns that can be repeated across tables, with tables at lower levels having multiple key columns (e.g., `Transaction` table). By connecting tables with
+primary keys, changes in non-key columns do not deteriorate the integrity of the database. For example, consider the effect of George Blake changing his name to Frederick Volger in 
+the database of Figure \@ref(fig:relationModel): Only the `Customer` table would have to be updated and all the other three tables would remain meaningful. 
+
+```{r relationModel, echo=F, fig.align='left', out.width='75%', out.height='60%'}
+
+knitr::include_graphics(path = 'figures/relational_model.png')
+```
+
+## Visualizing relational databases?
+
+Figure \@ref(fig:ER-model) shows the entity-relation diagram of the sakila database. Lines that connect tables indicate the tables are related and the markings on these connecting lines
+are interpreted using rules delineated by the entity-relation nomenclature in Figure \@(ref:ER-nomenclature):
+
+```{r ER-nomenclature, echo=F}
+knitr::include_graphics(path = 'figures/ER_cardinality.png')
+```
+
+\noindent
+The entity-relation nomenclature represents the **cardinality**---the maximum number of times an entity (i.e., a key or value) in one table can relate to instances of another entity in
+another table--- and **ordinality**---the minimum number of times an entity (i.e., a key or value) in one table can relate to instances of another entity in another table. In some 
+instances, the values of cardinality and ordinality are the same (e.g., the relations between the `language` and `film_actor` tables and the `inventory` and `category` tables). To
+better understand the entity-relation nomenclature, the following list provides three interpretations of the entity-relation diagram of the sakila database (Figure \@ref:(fig:ER-model)):
+
+1) `film_actor`-`language` relation: In any given film (`film_id`), an actor (`actor_id`) can only speak one language in a film and the film (`film_id`) can only be in one language. 
+2) `film_actor`-`film` relation: A given actor (`actor_id`) can be in one or many films (`film_id`). 
+3) `film_actor`-`film_category` relation: A film (`film_id`) can be in one or many film categories (`category_id`).
+
+\blandscape
+```{r ER-model, echo=F}
+knitr::include_graphics(path = 'sakila-db/ER_model_sakila.png')
+```
+\elandscape
+
+## Exploring the world of relational database management systems
+
+RDBMSs have existed for over three decades. Although many RDBMSs now exist, popular commercial products include the Oracle Database (Oracle Corporation), SQL Server (Microsoft), and DB2 
+Universal Database (IBM), with each product providing specific advantages. Because the primary purpose of this document is didactic, an open source (i.e., free) database server will be
+used. The following list presents popular open source databases:
+
+* MySQL
+* MariaDB (clone of MySQL with enhanced capabilities)
+* PostgreSQL
+* SQLite
+
+\noindent
+For more information, see this [link](https://www.digitalocean.com/community/tutorials/sqlite-vs-mysql-vs-postgresql-a-comparison-of-relational-database-management-systems). Also note 
+that, with the proliferation of RDBMSs, many organizations now store data in multiple RDBMSs. and use tools such as Apache Drill to streamline the process of gathering data from multiple
+RDBMSs. 
+
+### Exploring MySQL
+
+Once MySQL has been installed on your computer, it must first be accessed. A connection is set up with the MySQL server using `dbConnect()` with the `MySQL()` driver. The code below 
+shows how to an SQLite data set and the Sakila sample database into your the MySQL server. Note that, to store data in MySQL from your computer, MySQL must first be enabled to accept
+local files by using `SET GLOBAL local_infile = true` (this involves first connecting to MySQL server from terminal). 
+
+```{r server_connection, echo=F}
+#set up connection with MySQL server; connect to meta data database
+conn_mysql <- dbConnect(drv = MySQL(), user = 'root', port = 3306, dbname = 'information_schema', password = 'tiramisu')
+
+dbGetQuery(conn = conn_mysql, statement = "USE sakila")
+#set up connection with SQLite server
+conn_sqlite <- dbConnect(RSQLite::SQLite(), 'professor_data/unitransparenz.sqlite')
+```
+
+
+Let's first see the databases in our MySQL server. 
+```{r view_databases, echo=F}
+dbGetQuery(conn_mysql, "SHOW databases")
+```
+
+Let's load an SQLite database into our MySQL server. 
+```{r load_sqlite_data, echo=F}
+#create database to store professor database
+dbGetQuery(conn_mysql, "CREATE DATABASE professor_data")
+
+#connect to this database 
+dbGetQuery(conn = conn_mysql, "USE professor_data")
+
+#connect to newly created database
+conn_prof <- dbConnect(drv = MySQL(), user = 'root', port = 3306, dbname = 'professor_data', password = 'tiramisu')
+
+#store to-be-loaded table names in SQLite database
+table_names_sqlite <- dbListTables(conn = conn_sqlite)
+
+#load tables in SQLite into MySQL database
+for (table_name in table_names_sqlite) {
+  #load table into temporary dataframe
+  df_temp <- dbReadTable(conn = conn_sqlite, name = table_name) 
+  
+  #write table into MySQL database (on hard disk)
+  dbWriteTable(conn = conn_mysql, name = table_name, value = df_temp, append = F, overwrite=T)
+}
+```
+
+Loading the sakila database from .sql files. Note that a schema file specifying the structure of each table is first loaded and the the data file is run.  
+```{bash load_sql_prof_data, echo=F}
+#locate source of MySQL server on hard disk 
+/usr/local/mysql/bin/mysql -u root -p
+
+read -p "Enter password:" tiramisu
+
+#password = 'tiramisu'
+source /Users/sebastiansciarra/Desktop/Datacamp/SQL/sakila-db/sakila-schema.sql
+
+source /Users/sebastiansciarra/Desktop/Datacamp/SQL/sakila-db/sakila-data.sql
+```
+
+The following queries are useful for incorporating into your workflow.  
+```{r mysql_workflow, echo=T, eval=F}
+dbGetQuery(conn_mysql, "show databases") #shows databases in server
+dbGetQuery(conn_mysql, "USE sakila") #uses sakila database
+dbListTables(conn_mysql)  #lists tables in sakila database
+
+dbGetQuery(conn_mysql, "SELECT now()") #gives current time
+dbGetQuery(conn_mysql, "DESC actor") #similar to glimpse() from dplyr; gives overview of variable features
+```
+
+### Creating a table in MySQL server
+
+Tables are created with schema statements that specify the number, types, and column restraints. The statement below creates a person table with several columns and identifies the 
+`person_id` column as the primary key. The table returned from `DESC person` shows the type of variable, whether a column can be omitted when an observation is inserted into the table 
+(`NULL`), what column is a key column (`Key`), and what default value is inserted into an empty cell for a specific column (`Default`). 
+
+```{r create_person_table, echo=F}
+dbGetQuery(conn = conn_mysql, statement = "CREATE DATABASE person_data")
+dbGetQuery(conn = conn_mysql, statement = "USE person_data")
+
+invisible(dbGetQuery(conn = conn_mysql, statement = "CREATE TABLE person 
+(person_id SMALLINT UNSIGNED,
+fname VARCHAR(20),
+lname VARCHAR(20),
+eye_color ENUM('BR','BL','GR'),
+birth_date DATE,
+street VARCHAR(30),
+city VARCHAR(20),
+state VARCHAR(20),
+country VARCHAR(20),
+postal_code VARCHAR(20),
+CONSTRAINT pk_person PRIMARY KEY (person_id)
+)"))
+
+dbGetQuery(conn = conn_mysql, statement = 'DESC person') #gives overview of table that was created
+```
+
+Let's now create a table that will store each person's favourite food. Note that two key columns are needed to ensure each row of the table can be uniquely identified. This table
+contains two constraints:
+
+1) `CONSTRAINT pk_favorite_food PRIMARY KEY (person_id, food)` specifies a two-column primary key
+2) `CONSTRAINT fk_fav_food_person_id FOREIGN KEY (person_id) REFERENCES person (person_id)` constrains the person_id component of the primary key to include only values from the person_id column in the person table. 
+
+```{r create_food_table, echo=F}
+#dbGetQuery(conn = conn_mysql, statement = 'DROP TABLE favorite_food')
+dbGetQuery(conn = conn_mysql, statement = 'CREATE TABLE favorite_food 
+(person_id SMALLINT UNSIGNED,
+food VARCHAR(20),
+CONSTRAINT pk_favorite_food PRIMARY KEY (person_id, food), 
+CONSTRAINT fk_fav_food_person_id FOREIGN KEY (person_id) REFERENCES person (person_id))')
+
+dbGetQuery(conn = conn_mysql, statement = 'DESC favorite_food')
+```
+
+With two tables generated, we now need to generate unique numeric keys. This is done by turning on the auto-increment feature of the primary key column using `ALTER`. Note that, because
+we previously used the person_id in the person_data as a foreign key constraint, we must first disable this constraint and re-eneable it after modifying the primary key column.
+
+```{r auto_increment, echo=F}
+dbExecute(conn = conn_mysql, statement = 'set foreign_key_checks = 0')
+dbGetQuery(conn = conn_mysql, statement = 'ALTER TABLE person MODIFY person_id SMALLINT UNSIGNED AUTO_INCREMENT')
+dbGetQuery(conn = conn_mysql, statement = 'set foreign_key_checks = 1')
+```
+
+With the `person_id` column enabled with an auto-increment feature, key values will be automatically generated. Let's now add data to the `person` table. 
+```{r populate_person_data, echo=F}
+dbExecute(conn = conn_mysql, statement = "INSERT INTO person
+(person_id, fname, lname, eye_color, birth_date)
+VALUES (null, 'William','Turner', 'BR', '1972-05-27')")
+
+dbGetQuery(conn = conn_mysql, statement = 'SELECT * FROM person WHERE person_id =1')
+```
+
+Let's now populate the `favorite_food` table where William Turner's favourite foods are nachos, pizza, and cookies. This means there will be three entries in the `favorite_food` table. 
+```{r populate_favorite_food, echo=F}
+dbExecute(conn = conn_mysql, statement = "INSERT INTO favorite_food (person_id, food) VALUES (1, 'pizza')")
+dbExecute(conn = conn_mysql, statement = "INSERT INTO favorite_food (person_id, food) VALUES (1, 'nachos')")
+dbExecute(conn = conn_mysql, statement = "INSERT INTO favorite_food (person_id, food) VALUES  (1, 'cookies')")
+
+```
+
+### Updating data
+Let's now update William Turner's address. The code below updates the `person` table for the row where `person_id = 1`. Note that the `WHERE` clause can be used to update more than one 
+row. 
+
+```{r update_row, echo=F}
+dbExecute(conn = conn_mysql, statement = "UPDATE person 
+SET street = '1225 Tremont St.',
+city = 'Boston',
+state = 'MA',
+country = 'USA',
+postal_code = '02138'
+WHERE person_id = 1")
+
+dbDisconnect(con = conn_mysql)
+```
+
+### Chapter conclusion 
+Let's now drop the two tables (`person` and `favorite_food`) because we will only work with the sakila database for the remaining chapters. 
+```{r drop_food_person_tables, echo=F}
+dbExecute(conn = conn_mysql, statement = 'DROP TABLE person, favorite_food')
+
+dbGetQuery(conn = conn_mysql, statement = 'USE person_data')
+dbListTables(conn = conn_mysql) #person_data database is now empty 
+dbExecute(conn = conn_mysql, statement = 'DROP DATABASE person_data')
+
+dbGetQuery(conn = conn_mysql, statement = 'SHOW databases')
+```
+

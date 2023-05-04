@@ -1,0 +1,234 @@
+---
+title: "Chapter 14: Views"
+header-includes:
+   - \usepackage{nccmath}
+   - \usepackage{caption}
+   - \usepackage{longtable}
+   - \usepackage{setspace}
+   - \usepackage{pdflscape}
+   - \usepackage{booktabs}
+   - \usepackage{longtable}
+   - \usepackage{array}
+   - \usepackage{multirow}
+   - \usepackage{wrapfig}
+   - \usepackage{float}
+   - \usepackage{colortbl}
+   - \usepackage{pdflscape}
+   - \usepackage{tabu}
+   - \usepackage{threeparttable}
+   - \usepackage{threeparttablex}
+   - \usepackage[normalem]{ulem}
+   - \usepackage{makecell}
+   - \usepackage{xcolor}
+   - \usepackage{amsthm}
+   - \newcommand{\blandscape}{\begin{landscape}}
+   - \newcommand{\elandscape}{\end{landscape}}
+   - \usepackage{upgreek}  #required for non-italicized Greek letters
+   - \usepackage{subcaption}
+   
+      #- \captionsetup[table]{textfont={it}, labelfont={bf}, singlelinecheck=false, labelsep=newline}
+   - \captionsetup[figure]{labelfont={normalfont, bf}, singlelinecheck=false, labelsep=newline}
+   
+   - \DeclareCaptionFont{figCaptionFont}{\fontfamily{phv}} #sets caption font to sans serif font of Helvetica 
+   - \DeclareCaptionFont{figCaptionSize}{\footnotesize} #set caption font size to footnote 
+   - \DeclareCaptionFont{figCaptionStyle}{\textup}  #set caption font to non-italicized font  
+   - \DeclareCaptionLabelSeparator{captionSep}{\newline\newline} #separates figure label and figure title with required white space
+   - \captionsetup[figure]{font = {figCaptionFont,figCaptionSize, figCaptionStyle}, labelsep = captionSep,  justification=justified}
+
+#setup for tables
+   - \captionsetup[table]{font = {figCaptionFont,figCaptionSize,figCaptionStyle}, labelfont={bf}, labelsep=captionSep, justification = raggedright, margin = {0cm,0cm}}
+   - \setlength\parindent{24pt}
+   
+format: "pandoc"
+output: pdf_document
+---
+
+```{r setup, include=F}
+knitr::opts_knit$set(root.dir = '~/Desktop/Datacamp/SQL')
+
+library(easypackages)
+packages_to_load <- c('tidyverse', 'RSQLite', 'dbplyr', 'DBI', 'odbc', 'RMySQL', 'reticulate', 'kableExtra', 'knitr', 'magick')
+packages(packages_to_load)
+
+reticulate::use_python(python = "/usr/local/msql/bin/")
+knitr::knit_engines$set(python.reticulate = FALSE)
+```
+
+```{r server_connection, echo=F}
+#set up connection with MySQL server; connect to meta data database
+conn_mysql <- dbConnect(drv = MySQL(), user = 'root', port = 3306, dbname = 'information_schema', password = 'tiramisu')
+
+dbGetQuery(conn = conn_mysql, statement = "USE sakila")
+#set up connection with SQLite server
+conn_sqlite <- dbConnect(RSQLite::SQLite(), 'professor_data/unitransparenz.sqlite')
+```
+
+# Chapter 14: Views
+
+Views are indispensable for helping end users effectively interact with data. Views represent customized tables and, importantly, do not take up any memory in the hard disk because
+they are simply reserved pieces of code. For example, the following query creates a view of the customer table with the email addresses anonymized. This anonymized view can be used
+by all non-marketing personnel who do not need email information, keeping data security high. 
+
+```{r view_example, echo=F}
+
+dbGetQuery(conn = conn_mysql, statement = "CREATE VIEW customer_vw (
+           customer_id, 
+           first_name, 
+           last_name, 
+           email)
+           AS SELECT  customer_id, first_name, last_name, 
+           concat(substr(email,1,2), '*****', substr(email, -4)) email
+           FROM customer")
+
+#query view (this runs the code thatc reates the view and the commands that qierythe view)
+dbGetQuery(conn = conn_mysql, statement = "SELECT first_name, last_name, email
+           FROM customer_vw")
+
+#use DESCRIBE to view the columns in a view (or dbListFields)
+dbListFields(conn = conn_mysql, name = 'customer_vw')
+dbGetQuery(conn = conn_mysql, statement = "DESCRIBE customer_vw")
+```
+
+Views can be used similarly to any other table. Select clauses can be applied to views and views can be joined to other tables. 
+
+## Why use views?
+
+### Data security
+
+### Data aggregation
+
+Views can be created so that end users can easily access pre-aggregated tables. If, at some future point, it would be more effective to put the view in a table, this can easily be accomplished. 
+
+### Hiding complexity 
+
+Some tasks require the linking of several tables (a very difficult and time-consuming task for end users). Complicated tables can be stored in views. For example, the following view 
+stores the following information about each film: the film category, the number of actors appearing in the film, the total number of copies in inventory, and the number of rentals for
+each film. 
+
+```{r view_example_hiding_complexity, echo=F}
+dbGetQuery(conn = conn_mysql, statement = " 
+           CREATE VIEW film_report (
+           AS 
+            SELECT f.film_id, f.title, f.description, f.rating,
+               #get film category for each film 
+               (SELECT c.name 
+               FROM category AS c 
+                  INNER JOIN film_category AS fc
+                  ON c.category_id = fc.category_id
+               WHERE fc.film_id = f.film_id) AS category_name
+            
+            FROM film AS f")
+```
+
+Note that five variables are generated using subqueries and so, if these variables are not selected from the view, then the scalar subqueries will not be computed. 
+
+### Joining partitioned data
+
+## Updatable views
+
+Views in MySQL and Oracle can be modified, but must follow the following rules:
+
+1) No aggregate functions (max, min, avg).
+2) The view does not contain `group by` or `having` clauses.
+3) The view does not use `UNION`, `UNION ALL`, or `DISTINCT`.
+4) The `from` clause includes at least one table or updatable view. 
+5) The `from` clause uses only inner joins if there is more than one table or view. 
+6) No subqueries exist in the select or from clause, and any subqueries in the where clause do not refer to tables in the from clause.
+
+\noindent
+Essentially, a view table can only be editable if it keeps the data at the lowest level. 
+
+### Updating simple views
+
+The query below updates a row in the `customer_vw` table. Note howthe update in the `customer_vw` view carries over into the customer table. Note that data cannot be inserted into views.
+
+```{r update_simple_view, echo=F}
+dbGetQuery(conn = conn_mysql, statement = "UPDATE customer_vw
+           SET last_name = 'Smith-Allen' 
+           WHERE customer_id = 1")
+
+dbGetQuery(conn = conn_mysql, statement = "SELECT last_name FROM customer WHERE customer_id = 1")
+```
+
+### Updating complex views
+
+```{r update_complex_view, echo=F}
+dbGetQuery(conn = conn_mysql, statement = "CREATE VIEW customer_details
+    AS
+    SELECT c.customer_id,
+      c.store_id,
+      c.first_name,
+      c.last_name,
+      c.address_id,
+      c.active,
+      c.create_date,
+      a.address,
+      ct.city,
+      cn.country,
+      a.postal_code
+    FROM customer c
+      INNER JOIN address a
+      ON c.address_id = a.address_id
+      INNER JOIN city ct
+      ON a.city_id = ct.city_id
+    INNER JOIN country cn
+      ON ct.country_id = cn.country_id;")
+
+#data can only be updated and inserted in tables individually
+dbGetQuery(conn = conn_mysql,statement = "SELECT * FROM customer_details LIMIT 10")
+```
+
+```{r echo=F, chapter_14_exercises}
+#1) Create view that contains each film that every actor appears in (film_title, category_name, first_name, last_name)
+#tables to use: actor --> film_actor --> film --> film_categoru 
+dbListFields(conn = conn_mysql, name = 'actor')
+dbGetQuery(conn = conn_mysql, statement = "SELECT title, category_name, first_name, last_name FROM actor_vw
+WHERE last_name = 'FAWCETT'")
+
+dbGetQuery(conn = conn_mysql, statement = "CREATE VIEW actor_vw 
+                  AS
+           SELECT f.title, a.first_name, a.last_name, c.name AS category_name
+           FROM actor AS a
+            INNER JOIN film_actor AS fa
+            ON a.actor_id = fa.actor_id
+            INNER JOIN film AS f 
+            ON fa.film_id = f.film_id
+            INNER JOIN film_category AS fc
+            ON f.film_id = fc.film_id
+            INNER JOIN category AS c
+            ON fc.category_id = c.category_id
+           ")
+
+#2. The film rental company manager would like to have a report that includes the name of every country, along with the total payments for all customers who live in each country. Generate a view definition that queries the country table and uses a scalar subquery to calculate a value for a column named tot_payments.
+#city --> address --> customer --> payment 
+
+dbGetQuery(conn = conn_mysql, statement = "CREATE VIEW country_revenue_vw
+           AS
+           SELECT c.country, 
+           (SELECT sum(p.amount) AS country_revenue
+           FROM city AS ci 
+               INNER JOIN address AS a 
+               ON ci.city_id = a.city_id
+               INNER JOIN customer AS cu
+               ON a.address_id = cu.address_id
+               INNER JOIN payment as p
+               ON cu.customer_id = p.customer_id
+           WHERE ci.country_id = c.country_id) AS tot_payments
+           FROM country AS c")
+
+#use 
+dbGetQuery(conn = conn_mysql, statement = "
+SELECT c.country, 
+(SELECT sum(p.amount) AS country_revenue
+           FROM city AS ci 
+               INNER JOIN address AS a 
+               ON ci.city_id = a.city_id
+               INNER JOIN customer AS cu
+               ON a.address_id = cu.address_id
+               INNER JOIN payment as p
+               ON cu.customer_id = p.customer_id
+           GROUP BY ci.country_id) 
+FROM country AS c")
+```
+
+

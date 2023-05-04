@@ -1,0 +1,223 @@
+---
+title: "Chapter 11: Conditional Logic"
+header-includes:
+   - \usepackage{nccmath}
+   - \usepackage{caption}
+   - \usepackage{longtable}
+   - \usepackage{setspace}
+   - \usepackage{pdflscape}
+   - \usepackage{booktabs}
+   - \usepackage{longtable}
+   - \usepackage{array}
+   - \usepackage{multirow}
+   - \usepackage{wrapfig}
+   - \usepackage{float}
+   - \usepackage{colortbl}
+   - \usepackage{pdflscape}
+   - \usepackage{tabu}
+   - \usepackage{threeparttable}
+   - \usepackage{threeparttablex}
+   - \usepackage[normalem]{ulem}
+   - \usepackage{makecell}
+   - \usepackage{xcolor}
+   - \usepackage{amsthm}
+   - \newcommand{\blandscape}{\begin{landscape}}
+   - \newcommand{\elandscape}{\end{landscape}}
+   - \usepackage{upgreek}  #required for non-italicized Greek letters
+   - \usepackage{subcaption}
+   
+      #- \captionsetup[table]{textfont={it}, labelfont={bf}, singlelinecheck=false, labelsep=newline}
+   - \captionsetup[figure]{labelfont={normalfont, bf}, singlelinecheck=false, labelsep=newline}
+   
+   - \DeclareCaptionFont{figCaptionFont}{\fontfamily{phv}} #sets caption font to sans serif font of Helvetica 
+   - \DeclareCaptionFont{figCaptionSize}{\footnotesize} #set caption font size to footnote 
+   - \DeclareCaptionFont{figCaptionStyle}{\textup}  #set caption font to non-italicized font  
+   - \DeclareCaptionLabelSeparator{captionSep}{\newline\newline} #separates figure label and figure title with required white space
+   - \captionsetup[figure]{font = {figCaptionFont,figCaptionSize, figCaptionStyle}, labelsep = captionSep,  justification=justified}
+
+#setup for tables
+   - \captionsetup[table]{font = {figCaptionFont,figCaptionSize,figCaptionStyle}, labelfont={bf}, labelsep=captionSep, justification = raggedright, margin = {0cm,0cm}}
+   - \setlength\parindent{24pt}
+   
+format: "pandoc"
+output: pdf_document
+---
+
+```{r setup, include=F}
+knitr::opts_knit$set(root.dir = '~/Desktop/Datacamp/SQL')
+
+library(easypackages)
+packages_to_load <- c('tidyverse', 'RSQLite', 'dbplyr', 'DBI', 'odbc', 'RMySQL', 'reticulate', 'kableExtra', 'knitr', 'magick')
+packages(packages_to_load)
+
+reticulate::use_python(python = "/usr/local/msql/bin/")
+knitr::knit_engines$set(python.reticulate = FALSE)
+```
+
+```{r server_connection, echo=F}
+#set up connection with MySQL server; connect to meta data database
+conn_mysql <- dbConnect(drv = MySQL(), user = 'root', port = 3306, dbname = 'information_schema', password = 'tiramisu')
+
+dbGetQuery(conn = conn_mysql, statement = "USE sakila")
+#set up connection with SQLite server
+conn_sqlite <- dbConnect(RSQLite::SQLite(), 'professor_data/unitransparenz.sqlite')
+```
+# Chapter 11: Conditional logic
+
+```{r searched_case_expression, echo=F}
+#returns 'active' when active = 1
+dbListFields(conn = conn_mysql, name = 'customer')
+dbGetQuery(conn = conn_mysql, statement = "SELECT first_name, last_name,
+           CASE 
+            WHEN active = 1 THEN 'ACTIVE'   
+            ELSE 'INACTIVE'
+           END activity_type
+           FROM customer")
+
+#query returns the number of rentals for inactive customers using; note that you cannot exclude the active column 
+dbGetQuery(conn = conn_mysql, statement = "SELECT first_name, last_name, num_rentals 
+           FROM 
+           (SELECT c.first_name, c.last_name, COUNT(*) AS num_rentals, c.active
+           FROM customer AS c
+           LEFT JOIN payment AS p
+           ON c.customer_id = p.customer_id
+           GROUP BY c.customer_id
+           HAVING c.active = 0) AS num_rentals")
+
+##we can use a case expression to return the number of rentals per customer for inactive customers
+dbGetQuery(conn = conn_mysql, statement = "SELECT c.first_name, c.last_name, 
+           CASE 
+            WHEN active = 1 THEN 0
+            ELSE
+             (SELECT count(*) FROM rental AS r 
+             WHERE r.customer_id = c.customer_id)
+           END num_rentals
+           FROM customer AS c
+           HAVING num_rentals > 0")
+
+```
+
+
+## Examples of case expressions 
+### Result set transformation
+
+The query below return the number of rentals in each month (from May to July). Note that `monthname()` extracts only the month from the date.  
+
+```{r example_case, echo=F}
+dbGetQuery(conn = conn_mysql, "SELECT monthname(rental_date) AS rental_month, COUNT(*) AS num_rentals
+           FROM rental 
+           WHERE rental_date BETWEEN '2005-05-01' AND '2005-08-01'
+           GROUp BY rental_month")
+
+```
+
+We can then use simple case expressions to convert this data from long to wide format.
+
+```{r example_case_transform, echo=F}
+dbGetQuery(conn = conn_mysql, statement = "SELECT 
+           SUM(CASE WHEN monthname(rental_date) = 'May' THEN 1 ELSE 0 END) AS may_rentals,
+           SUM(CASE WHEN monthname(rental_date) = 'June' THEN 1 ELSE 0 END) AS june_rentals,
+           SUM(CASE WHEN monthname(rental_date) = 'July' THEN 1 ELSE 0 END) AS july_rentals
+           FROM rental
+           WHERE rental_date BETWEEN '2005-05-01' AND '2005-08-01'")
+```
+
+Case expressions can also be used to determine whether certain relations exist. The query below determines whether each actor has appeared in a movies with ratings of G, PG, and NC-17. The second query determines the availability of each film according to a categorization nomenclature.
+
+```{r example_case_exist, echo=F}
+dbGetQuery(conn = conn_mysql, statement = "SELECT a.first_name, a.last_name, 
+                  CASE WHEN EXISTS (SELECT 1 FROM film_actor AS fa 
+                  INNER JOIN film AS f
+                  ON fa.film_id = f.film_id
+                  WHERE fa.actor_id = a.actor_id AND 
+                  f.rating = 'G') THEN 'Y' 
+                  ELSE 'N'
+                  END g_actor, 
+                  
+                  CASE WHEN EXISTS (SELECT 1 FROM film_actor AS fa
+                  INNER JOIN film AS f 
+                  ON fa.film_id = f.film_id
+                  WHERE fa.actor_id = a.actor_id AND
+                  f.rating = 'PG') THEN 'Y' ELSE 'N'
+                  END pg_actor, 
+                  
+                  CASE WHEN EXISTS (SELECT 1 FROM film_actor AS fa
+                  INNER JOIN film AS f 
+                  ON fa.film_id = f.film_id
+                  WHERE fa.actor_id = a.actor_id AND
+                  f.rating = 'NC-17') THEN 'Y' ELSE 'N'
+                  END nc_actor
+                  
+                  FROM actor AS a
+                  WHERE a.last_name LIKE 'S%' OR a.first_name LIKE 'S%'
+           ")
+
+dbGetQuery(conn = conn_mysql, statement = "SELECT f.title, 
+                  CASE  (SELECT count(*) FROM inventory AS i
+                  WHERE i.film_id = f.film_id)
+                  WHEN 0 THEN 'OUT OF STOCK'
+                  WHEN 1 THEN 'SCARCE'
+                  WHEN 2 THEN 'SCARCE'
+                  WHEN 3 THEN 'AVAILABLE'
+                  WHEN 4 THEN 'AVAILABLE'
+                  ELSE 'COMMON' END film_availability
+                  
+                  FROM film AS f")
+```
+
+### Division-by-zero errors
+
+Division by zero leads cells to be filled with `NULL` values. The query below calculates the average amount spent in each rental for each customer. Note that internal referencing cannot
+be performed within qury. 
+
+```{r division_zero_solution, echo=F}
+dbListFields(conn = conn_mysql, name = 'payment')
+dbGetQuery(conn = conn_mysql, statement = "SELECT c.customer_id, c.first_name, c.last_name, 
+                  sum(p.amount) AS tot_payment,
+                  count(p.amount) AS num_payments,
+                  sum(p.amount) / 
+                  CASE WHEN count(p.amount) = 0 THEN 1 ELSE count(p.amount)
+                  END avg_payment
+                  FROM customer AS c 
+                  LEFT OUTER JOIN payment AS p 
+                  ON c.customer_id = p.customer_id
+                  GROUP BY c.customer_id")
+
+```
+
+### Conditional updates
+
+The following query determines if customers are active by checking if they have rented a movie in the last 90 days.
+
+```{r conditional_update, echo=F}
+dbGetQuery(conn = conn_mysql, statement = "UPDATE customer AS c
+           SET active = CASE 
+           WHEN 90 <= (SELECT (datediff(now(), max(rental_date)))
+           FROM rental AS r 
+           WHERE r.customer_id = c.customer_id) THEN 0 ELSE 1 
+           END 
+           WHERE active = 1
+           ")
+```
+
+## Exercises
+
+```{r chapter-11-exercises, echo=F}
+#assign encoding pattern to each actor
+dbGetQuery(conn = conn_mysql, statement = "SELECT name, CASE name 
+           WHEN  name in ('English', 'Italian', 'French', 'German') THEN 'latin1'
+           WHEN name in ('Japanese', 'Mandarin') THEN 'utf8'
+           ELSE 'unknown' 
+           END 
+           FROM language")
+
+#convert the following query to wide format
+dbGetQuery(conn = conn_mysql, statement = "SELECT 
+           SUM(CASE WHEN rating = 'G' THEN 1 ELSE 0 END) AS num_g,
+           SUM(CASE WHEN rating = 'PG' THEN 1 ELSE 0 END) AS num_pg,
+           SUM(CASE WHEN rating = 'PG-13' THEN 1 ELSE 0 END) AS num_pg_13,
+           SUM(CASE WHEN rating = 'R' THEN 1 ELSE 0 END) AS num_r,
+           SUM(CASE WHEN rating = 'NC-17' THEN 1 ELSE 0 END) AS num_nc_17
+           FROM film")
+```
+

@@ -1,0 +1,269 @@
+---
+title: "Introduction to SQL"
+header-includes:
+   - \usepackage{nccmath}
+   - \usepackage{caption}
+   - \usepackage{longtable}
+   - \usepackage{setspace}
+   - \usepackage{pdflscape}
+   - \usepackage{booktabs}
+   - \usepackage{longtable}
+   - \usepackage{array}
+   - \usepackage{multirow}
+   - \usepackage{wrapfig}
+   - \usepackage{float}
+   - \usepackage{colortbl}
+   - \usepackage{pdflscape}
+   - \usepackage{tabu}
+   - \usepackage{threeparttable}
+   - \usepackage{threeparttablex}
+   - \usepackage[normalem]{ulem}
+   - \usepackage{makecell}
+   - \usepackage{xcolor}
+   - \usepackage{amsthm}
+   - \newcommand{\blandscape}{\begin{landscape}}
+   - \newcommand{\elandscape}{\end{landscape}}
+   - \usepackage{upgreek}  #required for non-italicized Greek letters
+   - \usepackage{subcaption}
+   
+      #- \captionsetup[table]{textfont={it}, labelfont={bf}, singlelinecheck=false, labelsep=newline}
+   - \captionsetup[figure]{labelfont={normalfont, bf}, singlelinecheck=false, labelsep=newline}
+   
+   - \DeclareCaptionFont{figCaptionFont}{\fontfamily{phv}} #sets caption font to sans serif font of Helvetica 
+   - \DeclareCaptionFont{figCaptionSize}{\footnotesize} #set caption font size to footnote 
+   - \DeclareCaptionFont{figCaptionStyle}{\textup}  #set caption font to non-italicized font  
+   - \DeclareCaptionLabelSeparator{captionSep}{\newline\newline} #separates figure label and figure title with required white space
+   - \captionsetup[figure]{font = {figCaptionFont,figCaptionSize, figCaptionStyle}, labelsep = captionSep,  justification=justified}
+
+#setup for tables
+   - \captionsetup[table]{font = {figCaptionFont,figCaptionSize,figCaptionStyle}, labelfont={bf}, labelsep=captionSep, justification = raggedright, margin = {0cm,0cm}}
+   - \setlength\parindent{24pt}
+   
+format: "pandoc"
+output: pdf_document
+---
+
+```{r setup, include=F}
+knitr::opts_knit$set(root.dir = '~/Desktop/Datacamp/SQL')
+
+library(easypackages)
+packages_to_load <- c('tidyverse', 'RSQLite', 'dbplyr', 'DBI', 'odbc', 'RMySQL', 'reticulate', 'kableExtra', 'knitr', 'magick')
+packages(packages_to_load)
+
+reticulate::use_python(python = "/usr/local/msql/bin/")
+knitr::knit_engines$set(python.reticulate = FALSE)
+```
+
+```{r server_connection, echo=F}
+#set up connection with MySQL server; connect to meta data database
+conn_mysql <- dbConnect(drv = MySQL(), user = 'root', port = 3306, dbname = 'information_schema', password = 'tiramisu')
+
+dbGetQuery(conn = conn_mysql, statement = "USE sakila")
+#set up connection with SQLite server
+conn_sqlite <- dbConnect(RSQLite::SQLite(), 'professor_data/unitransparenz.sqlite')
+```
+
+# Chapter 7: Data generation, manipulation, and conversion
+
+## Working with string data
+
+The following types of string data will be encountered in working with strings:
+
+1) `CHAR`: Each cell holds a string of a fixed length with padding. In MySQL, each cell has a limit of 255 characters. In Oracle Database, each cell has a limit of 2 000 characters.
+2) `VARCHAR`: The length of characters can vary across cells, with the limit of each cell being 65 535 in MySQL.
+2) `TEXT`: Used when each cell holds a large variable-length string. In MySQL, the limit is 4 GB. 
+
+\noindent
+The below query creates a table that has one CHAR-type column with a character length of 30, a VCHAR-type column of character length 30, and a TEXT-type field. 
+
+```{r create_string_table, echo=F}
+dbExecute(conn = conn_mysql, 
+          statement = "CREATE TABLE string_tbl
+          (char_fld CHAR (30),
+          vchar_fld VARCHAR (30),
+          text_fld TEXT)")
+
+```
+
+### String generation
+
+Let's now insert a row into the `string_tbl` table. Note that an error will be returned when trying to insert a string that exceeds the table limit. The default procedure for handling
+insertions that are too long is to return an error. Note that this can be changed by modifying `session.sql_model` to `ansi`, which will truncate strings according to the character limit
+and issue a warning. Note that the escape character of a single quotation mark (`'`) or two backslashes (`\\`; MySQL, Oracle Database) can be used to insert strings with quotes and/or
+apostrophes. If you want to take string data from one table for later use, use the `quote()` function. 
+
+```{r insert_string_data, echo=F}
+dbExecute(conn = conn_mysql, 
+          statement = "INSERT INTO string_tbl (char_fld, vchar_fld, text_fld) 
+          VALUES ('This is char data1',
+          'This is varchar data',
+          'This is text data')")
+
+dbGetQuery(conn = conn_mysql, 
+           statement = "SELECT @@session.sql_mode")
+
+dbExecute(conn = conn_mysql, 
+           statement = "SET sql_mode = 'ansi'")
+
+dbExecute(conn = conn_mysql, 
+          statement = "UPDATE string_tbl
+          SET vchar_fld = 'This is a piece of extremely long varchar data'")
+
+dbExecute(conn = conn_mysql, 
+          statement = "UPDATE string_tbl
+          SET vchar_fld = 'This string doesn\\'t work'")
+
+dbGetQuery(conn = conn_mysql, 
+           statement = "SELECT * FROM string_tbl")
+
+dbGetQuery(conn = conn_mysql, 
+           statement = "SELECT quote(vchar_fld) FROM string_tbl")
+```
+
+
+#### Including special characters
+
+Special characters can be accessed from the ASCII character set using the `char()` function. Because special characters are often rarely encountered, it is useful to use `char()` in 
+conjunction with the `concat()` function or the concatenation operator (`||`) in Oracle Database. The `SCHEMATA` table in `information_schema` database contains the character sets used
+in each database and the `TABLES` table lists the character sets used in each table of each database. 
+
+```{r special_characters, echo=F}
+#sakila database has utf8mb4 encoding
+dbGetQuery(conn = conn_mysql, 
+           statement = "
+           SELECT DEFAULT_CHARACTER_SET_NAME FROM SCHEMATA 
+           WHERE schema_name = 'sakila'") 
+
+#checking character encoding for a specific table in the sakila database 
+dbGetQuery(conn = conn_mysql, 
+           statement = "SELECT * FROM TABLES")
+
+
+#example concatenation
+dbGetQuery(conn = conn_mysql, statement = 'USE sakila')
+dbGetQuery(conn = conn_mysql, 
+           statement = "SELECT CONCAT('danke sch', CHAR (148), 'n')")
+dbGetQuery(conn = conn_mysql, 
+           statement = "SELECT ASCII('ö')")
+
+```
+
+### String manipulation 
+
+Note that the `LENGTH()` function removes the trailing spaces in the `char_fld` column. We can also find the position of a specific target string (note that the starting position is 
+returned) using `POSITION()` and its relative position with respect to the beginning and indexed from a specific position using `LOCATE()`. 
+
+```{r string_manipulation, echo=F}
+dbExecute(conn = conn_mysql,
+          statement = "DELETE FROM string_tbl")
+
+dbExecute(conn = conn_mysql, 
+          statement = "INSERT INTO string_tbl (char_fld, vchar_fld, text_fld)
+          VALUES ('This string is 28 characters',
+          'This string is 28 characters',
+          'This string is 28 characters')")
+
+#use LENGTH() to determine length of each cell 
+dbGetQuery(conn = conn_mysql, 
+           statement = "SELECT LENGTH(char_fld) char_length,
+           LENGTH(vchar_fld) varchar_length,
+           LENGTH(text_fld) text_length 
+           FROM string_tbl")
+
+dbGetQuery(conn = conn_mysql, 
+           statement = "SELECT POSITION('is' IN vchar_fld) 
+           FROM string_tbl")
+
+
+#finds location of 'is' character beginning from the seventh position; note that the value returned (13) is from the beginning of the string
+dbGetQuery(conn = conn_mysql,
+           statement = "SELECT LOCATE('is', vchar_fld, 7) 
+           FROM string_tbl")
+```
+
+#### String functions that return strings
+
+The `concat()` function can be used to combine data from tables into strings. Note how `concat()` converts dates and numbers to strings. Use the `insert()` function to add or replace 
+characters in the middle of a string and note that the third argument specifies the number of characters to replace. If this argument is zero, no characters are replaced and
+characters are shifted to the right. The `substring()` function extracts a specific number of characters beginning from a specific position.
+
+```{r string_concatenation_extraction, echo=F}
+dbExecute(conn = conn_mysql, 
+          statement = "DELETE FROM string_tbl")
+
+dbExecute(conn = conn_mysql, 
+          statement = "INSERT INTO string_tbl (text_fld)
+          VALUES ('This string was 29 characters')")
+
+#updating cell with concat()
+dbExecute(conn = conn_mysql, 
+          statement = "UPDATE string_tbl
+          SET text_fld = concat(text_fld, ', but now it is longer')")
+
+#combining data from table with concat()
+dbGetQuery(conn = conn_mysql,
+           statement = "SELECT concat(first_name, ' ', last_name, ' has been a customer since ', date(create_date)) cust_narrative
+           FROM customer")
+
+#inserts the word 'cruel' after goodbye (ninth position)
+dbGetQuery(conn = conn_mysql, 
+           statement = "SELECT INSERT('goodbye world', 9, 0, 'cruel ') string")
+
+#7 characters are replaced (the length of the string 'goodbye')
+dbGetQuery(conn = conn_mysql, 
+           statement = "SELECT INSERT('goodbye world', 1, 7, 'hello') string")
+
+#extracts five characters after the ninth position (conceptualize this a programming a sliding window)
+dbGetQuery(conn = conn_mysql, 
+           statement = "SELECT substring('goodbye world', 9, 5)")
+```
+
+## Working with numeric data
+
+The following functions may be useful when working with numbers:
+
+1) `mod()` computes the remainder of a division. 
+2) `pow(2, 8)` computes  $2^8$
+3) `ceil(72.1)` rounds up to 73. 
+4) `floor(72.1)` rounds down to 72. 
+5) `round(72.1153, 2)` rounds according to two decimal places. 
+5) `truncate(72.1153, 2)` simply reports the number without rounding. 
+
+## Working with temporal data
+
+The query below checks the time zone of the database and of the current session. The result of `SYSTEM` indicates that the server is using the time zone setting that the database is 
+using. The second query shows how to access the value of the current time zone. 
+
+```{r time_zones, echo=F}
+dbGetQuery(conn = conn_mysql, 
+           statement = "SELECT @@global.time_zone, @@session.time_zone")
+
+#The system time zone is Eastern Time (EDT)
+dbGetQuery(conn = conn_mysql, 
+           statement = "SHOW variables 
+           WHERE variable_name = 'system_time_zone'")
+
+#change time zone for session to Zurich 
+dbGetQuery(conn = conn_mysql, 
+          statement = "SET time_zone = '-4:00'")
+```
+
+### Generating temporal data
+
+When inserting dates into cells, the expected format must be followed. The first query checks the format of the `return_date` column (`datetime`) and the second query insert a datum that follows this format.
+
+```{r datetime_formats, echo=F}
+knitr::include_graphics(path = 'figures/datetime.png')
+```
+
+```{r generating_time_data, echo=F}
+dbGetQuery(conn = conn_mysql,
+           statement = "DESC rental")
+
+dbExecute(conn = conn_mysql, 
+          statement = "UPDATE rental
+          SET return_date = '2019-09-17 15:30:00' 
+          WHERE rental_id = 99999")
+```
+
+

@@ -1,0 +1,136 @@
+---
+title: "Chapter 15: Metadata"
+header-includes:
+   - \usepackage{nccmath}
+   - \usepackage{caption}
+   - \usepackage{longtable}
+   - \usepackage{setspace}
+   - \usepackage{pdflscape}
+   - \usepackage{booktabs}
+   - \usepackage{longtable}
+   - \usepackage{array}
+   - \usepackage{multirow}
+   - \usepackage{wrapfig}
+   - \usepackage{float}
+   - \usepackage{colortbl}
+   - \usepackage{pdflscape}
+   - \usepackage{tabu}
+   - \usepackage{threeparttable}
+   - \usepackage{threeparttablex}
+   - \usepackage[normalem]{ulem}
+   - \usepackage{makecell}
+   - \usepackage{xcolor}
+   - \usepackage{amsthm}
+   - \newcommand{\blandscape}{\begin{landscape}}
+   - \newcommand{\elandscape}{\end{landscape}}
+   - \usepackage{upgreek}  #required for non-italicized Greek letters
+   - \usepackage{subcaption}
+   
+      #- \captionsetup[table]{textfont={it}, labelfont={bf}, singlelinecheck=false, labelsep=newline}
+   - \captionsetup[figure]{labelfont={normalfont, bf}, singlelinecheck=false, labelsep=newline}
+   
+   - \DeclareCaptionFont{figCaptionFont}{\fontfamily{phv}} #sets caption font to sans serif font of Helvetica 
+   - \DeclareCaptionFont{figCaptionSize}{\footnotesize} #set caption font size to footnote 
+   - \DeclareCaptionFont{figCaptionStyle}{\textup}  #set caption font to non-italicized font  
+   - \DeclareCaptionLabelSeparator{captionSep}{\newline\newline} #separates figure label and figure title with required white space
+   - \captionsetup[figure]{font = {figCaptionFont,figCaptionSize, figCaptionStyle}, labelsep = captionSep,  justification=justified}
+
+#setup for tables
+   - \captionsetup[table]{font = {figCaptionFont,figCaptionSize,figCaptionStyle}, labelfont={bf}, labelsep=captionSep, justification = raggedright, margin = {0cm,0cm}}
+   - \setlength\parindent{24pt}
+   
+format: "pandoc"
+output: pdf_document
+---
+
+```{r setup, include=F}
+knitr::opts_knit$set(root.dir = '~/Desktop/Datacamp/SQL')
+
+library(easypackages)
+packages_to_load <- c('tidyverse', 'RSQLite', 'dbplyr', 'DBI', 'odbc', 'RMySQL', 'reticulate', 'kableExtra', 'knitr', 'magick')
+packages(packages_to_load)
+
+reticulate::use_python(python = "/usr/local/msql/bin/")
+knitr::knit_engines$set(python.reticulate = FALSE)
+```
+
+```{r server_connection, echo=F}
+#set up connection with MySQL server; connect to meta data database
+conn_mysql <- dbConnect(drv = MySQL(), user = 'root', port = 3306, dbname = 'information_schema', password = 'tiramisu')
+
+dbGetQuery(conn = conn_mysql, statement = "USE sakila")
+#set up connection with SQLite server
+conn_sqlite <- dbConnect(RSQLite::SQLite(), 'professor_data/unitransparenz.sqlite')
+```
+
+# Chapter 15: Metadata
+
+## information_schema
+
+Metadata is also called data dictionary or the system catalog. All the tables in `information_schema` are contained in views. The following query retrieves all of the tables in the 
+`sakila` database. 
+
+```{r metadata_example, echo=F}
+dbGetQuery(conn = conn_mysql, statement = "SELECT table_name, table_type
+           FROM information_schema.tables
+           WHERE table_schema = 'sakila' AND table_type = 'BASE TABLE'")
+
+#return only views in sakila database
+dbGetQuery(conn = conn_mysql, statement = "SELECT table_name, is_updatable
+           FROM information_schema.views
+           WHERE table_schema = 'sakila'")
+```
+
+Query below retrieves information about columns in the `film` table using the `columns` view. 
+
+```{r metadata_columns, echo=F}
+dbGetQuery(conn = conn_mysql, statement = "SELECT table_schema, table_name, column_name, data_type
+           FROM information_schema.columns
+           WHERE table_schema = 'sakila' AND table_name = 'film' ")
+```
+
+Information about the indexes is found within the `statistics` view and information about constraints is contained in the `table_constraints` view.
+
+```{r index_view, echoF}
+dbGetQuery(conn = conn_mysql, statement = "SELECT *
+           FROM information_schema.statistics
+           WHERE table_schema = 'sakila'")
+dbGetQuery(conn = conn_mysql, statement = "SELECT *
+           FROM information_schema.table_constraints
+           WHERE table_schema = 'sakila'")
+
+
+dbGetQuery(conn = conn_mysql, statement = "SELECT *
+           FROM information_schema.plugins")
+```
+
+### Deployment verification
+
+The query below checks that tables and views have the proper design characteristics (e.g., number of foreign keys, primary keys).
+
+```{r deployment_verification, echo=F}
+dbGetQuery(conn = conn_mysql, statement = "SELECT table_name,
+                  (SELECT count(*) FROM information_schema.columns AS clm                 
+                  WHERE clm.table_schema = tbl.table_schema                
+                  AND clm.table_name = tbl.table_name) AS num_columns, 
+                  
+                  (SELECT  count(*) FROM information_schema.statistics AS sta
+                  WHERE sta.table_schema = tbl.table_schema 
+                  AND sta.table_name = tbl.table_name) AS num_indexes, 
+                  
+                  (SELECT count(*) FROM information_schema.table_constraints AS tc 
+                  WHERE tc.table_schema = tbl.table_schema 
+                  AND tc.table_name = tbl.table_name 
+                  AND tc.constraint_type = 'PRIMARY KEY') AS num_primary_keys, 
+                  
+                  (SELECT count(*) FROM information_schema.table_constraints AS tc 
+                  WHERE tc.table_schema = tbl.table_schema 
+                  AND tc.table_name = tbl.table_name 
+                  AND tc.constraint_type = 'FOREIGN KEY') AS num_foreign_keys
+                  
+               FROM information_schema.tables AS tbl
+            WHERE tbl.table_schema = 'sakila' AND tbl.table_type = 'BASE TABLE'")
+
+```
+
+

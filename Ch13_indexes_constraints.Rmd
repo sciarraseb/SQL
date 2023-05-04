@@ -1,0 +1,236 @@
+---
+title: "Chapter 13: Indexes and Constraints"
+header-includes:
+   - \usepackage{nccmath}
+   - \usepackage{caption}
+   - \usepackage{longtable}
+   - \usepackage{setspace}
+   - \usepackage{pdflscape}
+   - \usepackage{booktabs}
+   - \usepackage{longtable}
+   - \usepackage{array}
+   - \usepackage{multirow}
+   - \usepackage{wrapfig}
+   - \usepackage{float}
+   - \usepackage{colortbl}
+   - \usepackage{pdflscape}
+   - \usepackage{tabu}
+   - \usepackage{threeparttable}
+   - \usepackage{threeparttablex}
+   - \usepackage[normalem]{ulem}
+   - \usepackage{makecell}
+   - \usepackage{xcolor}
+   - \usepackage{amsthm}
+   - \newcommand{\blandscape}{\begin{landscape}}
+   - \newcommand{\elandscape}{\end{landscape}}
+   - \usepackage{upgreek}  #required for non-italicized Greek letters
+   - \usepackage{subcaption}
+   
+      #- \captionsetup[table]{textfont={it}, labelfont={bf}, singlelinecheck=false, labelsep=newline}
+   - \captionsetup[figure]{labelfont={normalfont, bf}, singlelinecheck=false, labelsep=newline}
+   
+   - \DeclareCaptionFont{figCaptionFont}{\fontfamily{phv}} #sets caption font to sans serif font of Helvetica 
+   - \DeclareCaptionFont{figCaptionSize}{\footnotesize} #set caption font size to footnote 
+   - \DeclareCaptionFont{figCaptionStyle}{\textup}  #set caption font to non-italicized font  
+   - \DeclareCaptionLabelSeparator{captionSep}{\newline\newline} #separates figure label and figure title with required white space
+   - \captionsetup[figure]{font = {figCaptionFont,figCaptionSize, figCaptionStyle}, labelsep = captionSep,  justification=justified}
+
+#setup for tables
+   - \captionsetup[table]{font = {figCaptionFont,figCaptionSize,figCaptionStyle}, labelfont={bf}, labelsep=captionSep, justification = raggedright, margin = {0cm,0cm}}
+   - \setlength\parindent{24pt}
+   
+format: "pandoc"
+output: pdf_document
+---
+
+```{r setup, include=F}
+knitr::opts_knit$set(root.dir = '~/Desktop/Datacamp/SQL')
+
+library(easypackages)
+packages_to_load <- c('tidyverse', 'RSQLite', 'dbplyr', 'DBI', 'odbc', 'RMySQL', 'reticulate', 'kableExtra', 'knitr', 'magick')
+packages(packages_to_load)
+
+reticulate::use_python(python = "/usr/local/msql/bin/")
+knitr::knit_engines$set(python.reticulate = FALSE)
+```
+
+```{r server_connection, echo=F}
+#set up connection with MySQL server; connect to meta data database
+conn_mysql <- dbConnect(drv = MySQL(), user = 'root', port = 3306, dbname = 'information_schema', password = 'tiramisu')
+
+dbGetQuery(conn = conn_mysql, statement = "USE sakila")
+#set up connection with SQLite server
+conn_sqlite <- dbConnect(RSQLite::SQLite(), 'professor_data/unitransparenz.sqlite')
+```
+# Chapter 13: Indexes and constraints 
+
+## Indexes 
+
+Indexes are crucial for expediting SQL commands. For example, searching for names that begin with 'R' would take an overwhelming amount of time in a data set with 3 million rows. To 
+expeite the searchtime, indexes can be used. Like an index in a book, an index allows an SQL command to only search a subset of rows (instead of every row). 
+
+### Index creation
+
+Indices can easily be created by nesting the `ADD INDEX` statement in an `ALTER TABLE` command. Having created a table for an index, the query optimizer can now determine whether queries
+would benefit from using the index in searches. We can see that the `customer` table has indices for the `store_id`, `address_id`, and `last_name` columns. Note that, when creating 
+tables, an index is automatically generated for the primary key column. 
+
+```{sql index_creation, echo=F}
+ALTER TABLE customer 
+ADD INDEX idx_email (email); 
+```
+
+```{r view_index, echo=F}
+dbListFields(conn = conn_mysql, name = 'customer')
+dbGetQuery(conn = conn_mysql, statement = "SHOW INDEX FROM customer")
+```
+
+### Unique index
+
+Some columns in datasets can be permitted to have identical values (e.g., first & last names), but other columns must have unique values (e.g., primary key, email). An index can be
+designed to have unique values by simply adding the `UNIQUE` keyword in the index creation statements. 
+
+```{r unique_index_creation, echo=F}
+dbGetQuery(conn = conn_mysql, statement = "ALTER TABLE customer 
+           ADD UNIQUE idx_email (email)")
+
+#returns errors; Duplicate entry 'ALAN.KAHN@sakilacustomer.org' for key
+dbGetQuery(conn = conn_mysql, statement = "INSERT INTO customer
+          (store_id, first_name, last_name, email, address_id, active)
+         VALUES
+          (1,'ALAN','KAHN', 'ALAN.KAHN@sakilacustomer.org', 394, 1);
+    ERROR 1062 (23000): Duplicate entry 'ALAN.KAHN@sakilacustomer.org'
+      for key 'idx_email'")
+```
+
+### Multicolumn indexes
+
+Multicolumn indexes can also be created. If you know queries will search for rows based on first and last names, the table can be equipped with an index comprised of the first and last name. Note that the order is important. If, for example, the rows are organized by last name, then `last_name` should preceed `first_name` in the index. 
+
+```{sql multicolumn_index, echo=F}
+ALTER TABLE customer
+ADD INDEX idx_full_name (last_name, first_name);
+```
+
+### Types of indexes
+#### B tree
+
+B-tree index types are most common and constitute the default index type across all major database systems (Oracle, Microsoft SQL, MySQL). B-tree indices divide column values into 
+alphabetical (or numerical) sets and then further subdivide these sets. Instead of searching through all values in a column, only the values in a leaf node are searched. Importantly, 
+b-tree indices can withstand heavy modification by redistributing values across the branch and leaf nodes.
+
+#### Bitmap indices
+
+Indices are used for low-cardinality data. 
+
+#### Text indices
+
+Indexes are used for searching text content. 
+
+### How indexes are used
+
+Use the `EXPLAIN` keyword to see how SQL goes about using indexes. The execution path shown below indicates that the query used the `idx_last_name` key before the `full_name` key
+was added, but that the `full_name` key was used after it was added. 
+
+```{r index_checkup, echo=F}
+dbGetQuery(conn = conn_mysql, statement = "EXPLAIN
+SELECT customer_id, first_name, last_name
+FROM customer
+WHERE first_name LIKE 'S%' AND last_name LIKE 'P%'")
+
+dbGetQuery(conn = conn_mysql, statement = "ALTER TABLE customer
+ADD INDEX idx_full_name (last_name, first_name)")
+```
+
+### The downsides of indexes
+
+Indexes can dramatically slow down the rate at which tables are modified because, with each modification, each key must be changed. Therefore, only add keys to tables when there is good
+reason to do so. Otherwise, add and delete keys when they are only needed for temporary purposes. Two other rules to follow when using indexes are listed below:
+
+1) Build indexes on all columns referenced by foreign keys. 
+2) Index columns frequently used to retrieve data.
+
+## Constraints
+
+Three types of constraints:
+
+1) Primary key constraints
+2) Foreign key constraints: restrict one or more columns in a table to contain only values in another table's primary key columns (for example, changing a customer's ID should results
+in changes to this ID value in all other tables)
+3) Unique constraints restrict columns to have unique values. 
+4) Check constraints restrict range of permissible values. 
+
+### Constraint creation 
+
+The SQL commands below place a foreign key on the `address_id` column of the `customer` table such that its values must be contained within the`address_id` column values of the `address`
+table (parent table). Note that the InnoDb engine must be used to create foreign key constraints. The `on` clauses specify that deletions to `address_id` and `store_id` column values in the parent tables (`address` and `store`, respectively) will be blocked (`ON DELETE RESTRICT`) but that updates will be carried over (`ON UPDATE CASCADE`). 
+
+```{sql constraint_creation, echo=F}
+CREATE TABLE customer (
+      customer_id SMALLINT UNSIGNED NOT NULL AUTO_INCREMENT,
+      store_id TINYINT UNSIGNED NOT NULL,
+      first_name VARCHAR(45) NOT NULL,
+      last_name VARCHAR(45) NOT NULL,
+      email VARCHAR(50) DEFAULT NULL,
+      address_id SMALLINT UNSIGNED NOT NULL,
+      active BOOLEAN NOT NULL DEFAULT TRUE,
+      create_date DATETIME NOT NULL,
+      last_update TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+      
+      PRIMARY KEY (customer_id),
+      KEY idx_fk_store_id (store_id),
+      KEY idx_fk_address_id (address_id),
+      KEY idx_last_name (last_name),
+      CONSTRAINT fk_customer_address FOREIGN KEY (address_id)
+      REFERENCES address (address_id) ON DELETE RESTRICT ON UPDATE CASCADE, 
+      CONSTRAINT fk_customer_store FOREIGN KEY (store_id)
+      REFERENCES store (store_id) ON DELETE RESTRICT ON UPDATE CASCADE)
+ENGINE=InnoDB DEFAULT CHARSET=utf8;
+```
+
+The queries below provide two examples where deletions of `address_id` values in either the parent table (`customer`) or the child table (`address`) are blocked.
+
+```{r view_foreign_keys, echo=F}
+#we can see that the keys of the customer match how it was created above
+dbGetQuery(conn = conn_mysql, statement = "SELECT constraint_name, table_name, constraint_type
+        FROM information_schema.table_constraints
+        WHERE table_schema = 'sakila' AND table_name = 'customer'
+        ORDER BY 3,1")
+```
+Note that rows can be deleted from the child table (`customer` in this case) but not from the parent table (`address`). 
+
+```{r blocked_deletions, echo=F}
+dbListFields(conn = conn_mysql, name = 'customer')
+dbGetQuery(conn = conn_mysql, statement = "USE sakila")
+
+dbGetQuery(conn = conn_mysql, statement = "SELECT c.first_name, c.last_name, c.address_id, a.address
+FROM customer c
+INNER JOIN address a
+ON c.address_id = a.address_id
+WHERE c.address_id = 123")
+
+#blocked deletion from parent table 
+dbGetQuery(conn = conn_mysql, statement = "DELETE FROM address WHERE address_id = 123")
+
+#permitted deletion from child 
+dbGetQuery(conn = conn_mysql, statement = "DELETE FROM customer WHERE address_id = 123")
+```
+```{r permitted_updates, echo=F}
+dbGetQuery(conn = conn_mysql, statement = "UPDATE address
+           SET address_id = 9999 
+           WHERE address_id = 123")
+```
+
+```{r chapter_13_exercises, echo=F}
+#Generate an alter table statement for the rental table so that an error will be raised if a row having a value 
+#found in the rental.customer_id column is deleted from the customer (parent) table.
+dbGetQuery(conn = conn_mysql, statement = "ALTER TABLE rental
+    ADD CONSTRAINT fk_customer_address FOREIGN KEY (customer_id)
+    REFERENCES customer (customer_id) ON DELETE RESTRICT")
+
+dbGetQuery(conn = conn_mysql, statement = "CREATE INDEX idx_payment01 
+           ON payment (payment_date, amount)")
+
+```
+
+

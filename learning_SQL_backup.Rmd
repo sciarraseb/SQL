@@ -1,0 +1,3137 @@
+---
+title: "Learning SQL: Generate, Manipulate, and Retrieve Data"
+header-includes:
+   - \usepackage{nccmath}
+   - \usepackage{caption}
+   - \usepackage{longtable}
+   - \usepackage{setspace}
+   - \usepackage{pdflscape}
+   - \usepackage{booktabs}
+   - \usepackage{longtable}
+   - \usepackage{array}
+   - \usepackage{multirow}
+   - \usepackage{wrapfig}
+   - \usepackage{float}
+   - \usepackage{colortbl}
+   - \usepackage{pdflscape}
+   - \usepackage{tabu}
+   - \usepackage{threeparttable}
+   - \usepackage{threeparttablex}
+   - \usepackage[normalem]{ulem}
+   - \usepackage{makecell}
+   - \usepackage{xcolor}
+   - \usepackage{amsthm}
+   - \newcommand{\blandscape}{\begin{landscape}}
+   - \newcommand{\elandscape}{\end{landscape}}
+   - \usepackage{upgreek}  #required for non-italicized Greek letters
+   - \usepackage{subcaption}
+   
+      #- \captionsetup[table]{textfont={it}, labelfont={bf}, singlelinecheck=false, labelsep=newline}
+   - \captionsetup[figure]{labelfont={normalfont, bf}, singlelinecheck=false, labelsep=newline}
+   
+   - \DeclareCaptionFont{figCaptionFont}{\fontfamily{phv}} #sets caption font to sans serif font of Helvetica 
+   - \DeclareCaptionFont{figCaptionSize}{\footnotesize} #set caption font size to footnote 
+   - \DeclareCaptionFont{figCaptionStyle}{\textup}  #set caption font to non-italicized font  
+   - \DeclareCaptionLabelSeparator{captionSep}{\newline\newline} #separates figure label and figure title with required white space
+   - \captionsetup[figure]{font = {figCaptionFont,figCaptionSize, figCaptionStyle}, labelsep = captionSep,  justification=justified}
+
+#setup for tables
+   - \captionsetup[table]{font = {figCaptionFont,figCaptionSize,figCaptionStyle}, labelfont={bf}, labelsep=captionSep, justification = raggedright, margin = {0cm,0cm}}
+   - \setlength\parindent{24pt}
+   
+format: "pandoc"
+output: pdf_document
+---
+
+```{r setup, include=F}
+knitr::opts_knit$set(root.dir = '~/Desktop/Datacamp/SQL')
+
+library(easypackages)
+packages_to_load <- c('tidyverse', 'RSQLite', 'dbplyr', 'DBI', 'odbc', 'RMySQL', 'reticulate', 'kableExtra', 'knitr', 'magick')
+packages(packages_to_load)
+
+reticulate::use_python(python = "/usr/local/msql/bin/")
+knitr::knit_engines$set(python.reticulate = FALSE)
+```
+
+# Chapter 1: Introduction to relational database management systems
+## Why use relational database management systems?
+
+Relational database management systems (RDBMS) provide an efficient framework for storing and analyzing data for two reasons. First, and in contrast to typical analytical softwares that
+store data in the computer's temporary memory (i.e., random access memory), RDBSMs store data on the hard disk of a computer, thus saving performance for focal analyses. When using
+RDBSMs, data are only ever stored in the computer's temporary memory when queried. Because data are stored in the hard disk and the storage capacity of the hard disk of any computer far
+exceeds that of the temporary memory, RDBSMs allow users to work with very large data sets.
+
+Second, data storage in RDBMSs. follows an efficient framework. Before explaining the framework used for data storage in RDBMSs., consider a traditional method of storing data whereby
+all information is stored in one table. Furthermore, consider a situation where a bank stores data about its customers, their accounts, and transactions into and out of their accounts.
+The bank's data can be conceptualized as a hierarchy, with each customer having several accounts, and each account having several logged transactions. To store customer data in one large
+data set, the information needs to be stored at its lowest level (i.e., transaction level). Table \@ref(tab:entire-dataset} below show what such a data set would like. Importantly, many
+pieces of information are repeated the rows. If this format of storing data were adopted for all the bank's customers, it becomes clear that, with the large amount of redundant
+information, the data set will occupy more space in the hard disk than it needs to. 
+
+\blandscape
+```{r entire-dataset, echo=F}
+entire_dataset <- data.frame('txn_id' = c(978, 979, 980, 981, 982, 983, 984), 
+                            'account_id' = c(103, 103, 104, 105, 105, 105, 106), 
+                            'cus_id' = c(1, 1, 1, 2, 2, 2, 2  ), 
+                            'fname' = c('George', 'George', 'George', 'Sue', 'Sue','Sue','Sue'), 
+                            'lname' = c('Blake', 'Blake', 'Blake', 'Smith', 'Smith','Smith','Smith'),
+                            'txn_type_cd' = c('DBT', 'CDT', 'DBT', 'DBT', 'CDT', 'CDT', 'DBT'),
+                            'amount' = c(100, 25, 250, 1000, 138.50, 77.86, 500.00 ), 
+                            'date' = as.Date(c('2004-01-22','2004-02-05', '2004-03-09','2004-03-25', '2004-04-02','2004-04-04', '2004-03-27')),
+                            'name' = c('Checking', 'Checking', 'Savings', 'Checking', 'Checking', 'Checking', 'Money market'), 
+                            'balance' = c(75, 75, 250, 783.64, 783.64, 783.64, 500), check.names = F)
+
+kbl(entire_dataset, booktabs = TRUE, format = 'latex', linesep = '',
+      align = 'l', 
+      caption = 'Example of Table Storing Complete Dataset', 
+    escape=T) %>%
+   kable_styling(full_width = T, latex_options= c('hold_position'), position = 'left', font_size = 10)
+```
+\elandscape
+
+To efficiently store data, RDBMSs. eliminates storing redundant information. RDBMSs. follow the **relational model** of data storage, which stores data in multiple tables. The number
+of tables is determined by the number of entities (customers, accounts, products, and transactions), as shown in Figure \@ref(fig:relationModel). Each table in Figure
+\@ref(fig:relationModel) has a set of identifier columns or **primary keys** that uniquely identify each row as (`cust_id, account_id, product_cd,`and `txn_id`). Importantly, primary 
+keys should never be allowed to change because it would cause tables to become obsolete or, even worse, inaccurate. As an example, consider the consequences of George Blake's ID value 
+changing to 11 and how that would cause the first two rows of the `Account` table to become meaningless because it would be impossible to tell how they referred to. Because primary keys
+never change, they are the only columns that can be repeated across tables, with tables at lower levels having multiple key columns (e.g., `Transaction` table). By connecting tables with
+primary keys, changes in non-key columns do not deteriorate the integrity of the database. For example, consider the effect of George Blake changing his name to Frederick Volger in 
+the database of Figure \@ref(fig:relationModel): Only the `Customer` table would have to be updated and all the other three tables would remain meaningful. 
+
+```{r relationModel, echo=F, fig.align='left', out.width='75%', out.height='60%'}
+
+knitr::include_graphics(path = 'figures/relational_model.png')
+```
+
+## Visualizing relational databases?
+
+Figure \@ref(fig:ER-model) shows the entity-relation diagram of the sakila database. Lines that connect tables indicate the tables are related and the markings on these connecting lines
+are interpreted using rules delineated by the entity-relation nomenclature in Figure \@(ref:ER-nomenclature):
+
+```{r ER-nomenclature, echo=F}
+knitr::include_graphics(path = 'figures/ER_cardinality.png')
+```
+
+\noindent
+The entity-relation nomenclature represents the **cardinality**---the maximum number of times an entity (i.e., a key or value) in one table can relate to instances of another entity in
+another table--- and **ordinality**---the minimum number of times an entity (i.e., a key or value) in one table can relate to instances of another entity in another table. In some 
+instances, the values of cardinality and ordinality are the same (e.g., the relations between the `language` and `film_actor` tables and the `inventory` and `category` tables). To
+better understand the entity-relation nomenclature, the following list provides three interpretations of the entity-relation diagram of the sakila database (Figure \@ref:(fig:ER-model)):
+
+1) `film_actor`-`language` relation: In any given film (`film_id`), an actor (`actor_id`) can only speak one language in a film and the film (`film_id`) can only be in one language. 
+2) `film_actor`-`film` relation: A given actor (`actor_id`) can be in one or many films (`film_id`). 
+3) `film_actor`-`film_category` relation: A film (`film_id`) can be in one or many film categories (`category_id`).
+
+\blandscape
+```{r ER-model, echo=F}
+knitr::include_graphics(path = 'sakila-db/ER_model_sakila.png')
+```
+\elandscape
+
+## Exploring the world of relational database management systems
+
+RDBMSs have existed for over three decades. Although many RDBMSs now exist, popular commercial products include the Oracle Database (Oracle Corporation), SQL Server (Microsoft), and DB2 
+Universal Database (IBM), with each product providing specific advantages. Because the primary purpose of this document is didactic, an open source (i.e., free) database server will be
+used. The following list presents popular open source databases:
+
+* MySQL
+* MariaDB (clone of MySQL with enhanced capabilities)
+* PostgreSQL
+* SQLite
+
+\noindent
+For more information, see this [link](https://www.digitalocean.com/community/tutorials/sqlite-vs-mysql-vs-postgresql-a-comparison-of-relational-database-management-systems). Also note 
+that, with the proliferation of RDBMSs, many organizations now store data in multiple RDBMSs. and use tools such as Apache Drill to streamline the process of gathering data from multiple
+RDBMSs. 
+
+### Exploring MySQL
+
+Once MySQL has been installed on your computer, it must first be accessed. A connection is set up with the MySQL server using `dbConnect()` with the `MySQL()` driver. The code below 
+shows how to an SQLite data set and the Sakila sample database into your the MySQL server. Note that, to store data in MySQL from your computer, MySQL must first be enabled to accept
+local files by using `SET GLOBAL local_infile = true` (this involves first connecting to MySQL server from terminal). 
+
+```{r server_connection, echo=F}
+#set up connection with MySQL server; connect to meta data database
+conn_mysql <- dbConnect(drv = MySQL(), user = 'root', port = 3306, dbname = 'information_schema', password = 'tiramisu')
+
+dbGetQuery(conn = conn_mysql, statement = "USE sakila")
+#set up connection with SQLite server
+conn_sqlite <- dbConnect(RSQLite::SQLite(), 'professor_data/unitransparenz.sqlite')
+```
+
+
+Let's first see the databases in our MySQL server. 
+```{r view_databases, echo=F}
+dbGetQuery(conn_mysql, "SHOW databases")
+```
+
+Let's load an SQLite database into our MySQL server. 
+```{r load_sqlite_data, echo=F}
+#create database to store professor database
+dbGetQuery(conn_mysql, "CREATE DATABASE professor_data")
+
+#connect to this database 
+dbGetQuery(conn = conn_mysql, "USE professor_data")
+
+#connect to newly created database
+conn_prof <- dbConnect(drv = MySQL(), user = 'root', port = 3306, dbname = 'professor_data', password = 'tiramisu')
+
+#store to-be-loaded table names in SQLite database
+table_names_sqlite <- dbListTables(conn = conn_sqlite)
+
+#load tables in SQLite into MySQL database
+for (table_name in table_names_sqlite) {
+  #load table into temporary dataframe
+  df_temp <- dbReadTable(conn = conn_sqlite, name = table_name) 
+  
+  #write table into MySQL database (on hard disk)
+  dbWriteTable(conn = conn_mysql, name = table_name, value = df_temp, append = F, overwrite=T)
+}
+```
+
+Loading the sakila database from .sql files. Note that a schema file specifying the structure of each table is first loaded and the the data file is run.  
+```{bash load_sql_prof_data, echo=F}
+#locate source of MySQL server on hard disk 
+/usr/local/mysql/bin/mysql -u root -p
+
+read -p "Enter password:" tiramisu
+
+#password = 'tiramisu'
+source /Users/sebastiansciarra/Desktop/Datacamp/SQL/sakila-db/sakila-schema.sql
+
+source /Users/sebastiansciarra/Desktop/Datacamp/SQL/sakila-db/sakila-data.sql
+```
+
+The following queries are useful for incorporating into your workflow.  
+```{r mysql_workflow, echo=T, eval=F}
+dbGetQuery(conn_mysql, "show databases") #shows databases in server
+dbGetQuery(conn_mysql, "USE sakila") #uses sakila database
+dbListTables(conn_mysql)  #lists tables in sakila database
+
+dbGetQuery(conn_mysql, "SELECT now()") #gives current time
+dbGetQuery(conn_mysql, "DESC actor") #similar to glimpse() from dplyr; gives overview of variable features
+```
+
+### Creating a table in MySQL server
+
+Tables are created with schema statements that specify the number, types, and column restraints. The statement below creates a person table with several columns and identifies the 
+`person_id` column as the primary key. The table returned from `DESC person` shows the type of variable, whether a column can be omitted when an observation is inserted into the table 
+(`NULL`), what column is a key column (`Key`), and what default value is inserted into an empty cell for a specific column (`Default`). 
+
+```{r create_person_table, echo=F}
+dbGetQuery(conn = conn_mysql, statement = "CREATE DATABASE person_data")
+dbGetQuery(conn = conn_mysql, statement = "USE person_data")
+
+invisible(dbGetQuery(conn = conn_mysql, statement = "CREATE TABLE person 
+(person_id SMALLINT UNSIGNED,
+fname VARCHAR(20),
+lname VARCHAR(20),
+eye_color ENUM('BR','BL','GR'),
+birth_date DATE,
+street VARCHAR(30),
+city VARCHAR(20),
+state VARCHAR(20),
+country VARCHAR(20),
+postal_code VARCHAR(20),
+CONSTRAINT pk_person PRIMARY KEY (person_id)
+)"))
+
+dbGetQuery(conn = conn_mysql, statement = 'DESC person') #gives overview of table that was created
+```
+
+Let's now create a table that will store each person's favourite food. Note that two key columns are needed to ensure each row of the table can be uniquely identified. This table
+contains two constraints:
+
+1) `CONSTRAINT pk_favorite_food PRIMARY KEY (person_id, food)` specifies a two-column primary key
+2) `CONSTRAINT fk_fav_food_person_id FOREIGN KEY (person_id) REFERENCES person (person_id)` constrains the person_id component of the primary key to include only values from the person_id column in the person table. 
+
+```{r create_food_table, echo=F}
+#dbGetQuery(conn = conn_mysql, statement = 'DROP TABLE favorite_food')
+dbGetQuery(conn = conn_mysql, statement = 'CREATE TABLE favorite_food 
+(person_id SMALLINT UNSIGNED,
+food VARCHAR(20),
+CONSTRAINT pk_favorite_food PRIMARY KEY (person_id, food), 
+CONSTRAINT fk_fav_food_person_id FOREIGN KEY (person_id) REFERENCES person (person_id))')
+
+dbGetQuery(conn = conn_mysql, statement = 'DESC favorite_food')
+```
+
+With two tables generated, we now need to generate unique numeric keys. This is done by turning on the auto-increment feature of the primary key column using `ALTER`. Note that, because
+we previously used the person_id in the person_data as a foreign key constraint, we must first disable this constraint and re-eneable it after modifying the primary key column.
+
+```{r auto_increment, echo=F}
+dbExecute(conn = conn_mysql, statement = 'set foreign_key_checks = 0')
+dbGetQuery(conn = conn_mysql, statement = 'ALTER TABLE person MODIFY person_id SMALLINT UNSIGNED AUTO_INCREMENT')
+dbGetQuery(conn = conn_mysql, statement = 'set foreign_key_checks = 1')
+```
+
+With the `person_id` column enabled with an auto-increment feature, key values will be automatically generated. Let's now add data to the `person` table. 
+```{r populate_person_data, echo=F}
+dbExecute(conn = conn_mysql, statement = "INSERT INTO person
+(person_id, fname, lname, eye_color, birth_date)
+VALUES (null, 'William','Turner', 'BR', '1972-05-27')")
+
+dbGetQuery(conn = conn_mysql, statement = 'SELECT * FROM person WHERE person_id =1')
+```
+
+Let's now populate the `favorite_food` table where William Turner's favourite foods are nachos, pizza, and cookies. This means there will be three entries in the `favorite_food` table. 
+```{r populate_favorite_food, echo=F}
+dbExecute(conn = conn_mysql, statement = "INSERT INTO favorite_food (person_id, food) VALUES (1, 'pizza')")
+dbExecute(conn = conn_mysql, statement = "INSERT INTO favorite_food (person_id, food) VALUES (1, 'nachos')")
+dbExecute(conn = conn_mysql, statement = "INSERT INTO favorite_food (person_id, food) VALUES  (1, 'cookies')")
+
+```
+
+### Updating data
+Let's now update William Turner's address. The code below updates the `person` table for the row where `person_id = 1`. Note that the `WHERE` clause can be used to update more than one 
+row. 
+
+```{r update_row, echo=F}
+dbExecute(conn = conn_mysql, statement = "UPDATE person 
+SET street = '1225 Tremont St.',
+city = 'Boston',
+state = 'MA',
+country = 'USA',
+postal_code = '02138'
+WHERE person_id = 1")
+
+dbDisconnect(con = conn_mysql)
+```
+
+### Chapter conclusion 
+Let's now drop the two tables (`person` and `favorite_food`) because we will only work with the sakila database for the remaining chapters. 
+```{r drop_food_person_tables, echo=F}
+dbExecute(conn = conn_mysql, statement = 'DROP TABLE person, favorite_food')
+
+dbGetQuery(conn = conn_mysql, statement = 'USE person_data')
+dbListTables(conn = conn_mysql) #person_data database is now empty 
+dbExecute(conn = conn_mysql, statement = 'DROP DATABASE person_data')
+
+dbGetQuery(conn = conn_mysql, statement = 'SHOW databases')
+```
+
+
+# Chapter 2: Query primer 
+## Query mechanics
+
+When connecting to a databse, a connection ID is issued after a connection is made. This ID number will be useful in instances where errors are incurred and help is needed from a 
+database administrator. This can be accessed using `dbGetInto()`. Like the primary key for any table in a relational databae management system, the connection ID of a MySQL server is 
+generated in increasing order (beginning from 1). 
+
+```{r connection_mechanics, echo=F}
+conn_mysql <- dbConnect(drv = MySQL(), user = 'root', port = 3306, dbname = 'sakila', password = 'tiramisu')
+DBI::dbGetInfo(dbObj = conn_mysql)$threadId #connection ID
+```
+
+```{r query_info, echo=F}
+query_df <- dbGetQuery(conn = conn_mysql, statement = "SELECT * FROM CATEGORY")
+dbGetQuery(conn = conn_mysql, statement = "SELECT version(), user(), database()")
+```
+
+Some notes on the following queries: 
+
+1) Using `DISTINCT` to check that no duplicates exist in a result set works, but is computationally taxing with larger data sets. 
+
+```{r query_info, echo=F}
+#create new columns and give them aliases (AS)
+alias_df <- dbGetQuery(conn = conn_mysql, 
+statement = "SELECT language_id,
+'COMMON' language_usage, 
+language_id * 3.14159 AS lang_pi_value
+FROM language")
+
+#remove duplication (DISTINCT)
+distinct_df <- dbGetQuery(conn = conn_mysql, 
+statement = "SELECT DISTINCT actor_id FROM film_actor ORDER BY actor_id")
+```
+
+In addition to accessing data from permanent tables (i.e., created with `CREATE`), the `FROM` clause can be used to access data from **derived tables** (i.e., tables in temporary memory),
+**temporary tables**(tables created during the session that disappear after the session is closed), and **virtual tables** (i.e., created with `CREATE VIEW` [similar to using `View()` in
+R]). The first query uses the `FROM` clause to access data from the `cust` derived table and then concatenates the first and last names from the derived table. The second query creates a
+temporary table using `CREATE TEMPORARY`. The third query creates a virtual table that has no associated data and is stored in the data dictionary. 
+
+```{r from_clause, echo=F}
+#derived (sub-query) tables
+derived_query_df <- dbGetQuery(conn = conn_mysql, statement = "SELECT CONCAT (cust.first_name, ',', cust.last_name) AS full_name FROM
+(SELECT first_name, last_name, email FROM customer
+WHERE first_name = 'JESSIE') cust")
+
+#temporary table; note that by loading the temporary table into a dataframe in R, the data has been loaded into the temporary memory of the computer
+dbExecute(conn = conn_mysql, 
+statement = "CREATE TEMPORARY TABLE actors_j
+(actor_id smallint(5),
+first_name varchar(45),
+last_name varchar(45))")
+
+##insert rows from actor table into temporary table
+dbExecute(conn = conn_mysql, 
+statement = "INSERT INTO actors_j
+(SELECT actor_id, first_name, last_name 
+FROM actor
+WHERE last_name LIKE 'J%')")
+
+temporary_query_df <- dbGetQuery(conn = conn_mysql, statement = "SELECT * FROM actors_j")
+rm(temporary_query_df) #ensures dataframe is removed from temporary memory of computer 
+
+#virtual table; no result set emerges
+dbExecute(conn = conn_mysql, statement = "CREATE VIEW cust_vw AS
+SELECT customer_id, first_name, last_name, active
+FROM customer")
+
+#use FROM to view contents of cust_vw
+virtual_query_df <- dbGetQuery(conn = conn_mysql, statement = "SELECT first_name, last_name FROM cust_vw WHERE active = 0")
+rm(virtual_query_df)
+```
+
+### Table links 
+
+When selecting columns from two or more tables, each column should be prefixed with the table name. The query below finds the customers who rented a DVD on June 14, 2005. The `INNER JOIN`clause is used to select rows with customer ID values in both tables. Because table names are repeated, it is efficient to alias table names. 
+
+```{r table_link_ex, echo=F}
+#table link; no table aliasing
+df_no_aliasing <- dbGetQuery(conn = conn_mysql, 
+           statement = "SELECT customer.first_name, customer.last_name, TIME(rental.rental_date) rental_time
+           FROM customer
+           INNER JOIN rental
+           ON customer.customer_id = rental.customer_id
+           WHERE date(rental.rental_date) = '2005-06-14'")
+
+#table link; table aliasing
+df_aliasing <- dbGetQuery(conn = conn_mysql, 
+           statement = "SELECT c.first_name, c.last_name, TIME(r.rental_date) rental_time
+FROM customer AS c
+INNER JOIN rental AS r
+ON c.customer_id = r.customer_id
+WHERE date(r.rental_date) = '2005-06-14'")
+
+all.equal(df_no_aliasing, df_aliasing) #TRUE
+rm(df_no_aliasing, df_aliasing)
+
+
+```
+## The WHERE clause
+
+## The GROUP BY and HAVING clauses
+
+The `GROUP BY` clauses works just like the `dplyr::group_by()` and the `HAVING` clause works just like `dplyr::filter()`. The query below counts the number of rentals per customer and
+only returns customers who have rented from than 40 films. 
+```{r aggregating_data, echo=F}
+aggregate_df <- dbGetQuery(conn = conn_mysql, 
+                           statement = "SELECT c.first_name, c.last_name, count(*) AS num_films_rented
+                           FROM customer AS c
+                           INNER JOIN rental AS R 
+                           ON c.customer_id = r.customer_id
+                           GROUP BY c.first_name, c.last_name
+                           HAVING num_films_rented >= 40")
+rm(aggregate_df)
+
+```
+
+
+## The ORDER BY clause 
+
+Note the nomenclature for ordering columns in opposite orders. 
+```{r ordering_data, echo=F}
+dbGetQuery(conn = conn_mysql, 
+                           statement = "SELECT c.first_name, c.last_name, count(*) AS num_films_rented
+                           FROM customer AS c
+                           INNER JOIN rental AS R 
+                           ON c.customer_id = r.customer_id
+                           GROUP BY c.first_name, c.last_name
+                           HAVING num_films_rented >= 40 
+                           ORDER BY last_name DESC, num_films_rented ASC")
+rm(ordered_df)
+```
+
+## Exercises
+
+```{r exercise_queries, echo=F}
+#1. Retrieve the actor ID, first name, and last name for all actors. Sort by last name and then by first name.
+dbGetQuery(conn = conn_mysql, 
+           statement = 'SELECT actor_id, first_name, last_name 
+           FROM actor 
+           ORDER BY last_name, first_name
+           ')
+
+#2. Retrieve the actor ID, first name, and last name for all actors whose last name equals 'WILLIAMS' or 'DAVIS'. 
+##this can be achieved using WHERE or HAVING
+dbGetQuery(conn = conn_mysql, 
+           statement = "SELECT actor_id, first_name, last_name 
+           FROM actor 
+           WHERE last_name = 'Williams' OR last_name = 'Davis'")
+
+#3. Write a query against the rental table that returns the IDs of the customers who rented a film on July 5, 2005 (use the rental.rental_date column, and you can use the date() function to ignore the time component). Include a single row for each distinct customer ID.
+dbListFields(conn = conn_mysql, name = 'rental')
+dbGetQuery(conn = conn_mysql, 
+           statement = "SELECT DISTINCT(c.customer_id), c.first_name, c.last_name 
+           FROM customer AS c
+           INNER JOIN rental AS r
+           ON c.customer_id = r.customer_id
+           WHERE date(r.rental_date)  = '2005-07-05'")
+
+#more efficient query if you just want to get the number of unique customers and not any identifying information 
+dbGetQuery(conn = conn_mysql, 
+           statement = "SELECT DISTINCT(customer_id)
+           FROM rental 
+           WHERE date(rental_date)  = '2005-07-05'")
+```
+
+# Chapter 4: Filtering
+## Filtering for rows that do not match a condition
+
+Rows of tables can be filtered based on whether they do not match a condition using the following three methods:
+
+1) `NOT` clause
+2) `<>`
+3) `!=`
+
+```{r anti_match_filter, echo=F}
+anti_match_not_df <- dbGetQuery(conn = conn_mysql, 
+           statement = "SELECT first_name, last_name 
+           FROM customer 
+           WHERE NOT (first_name = 'Steven' AND last_name = 'Young')
+           ORDER BY first_name ASC
+           LIMIT 10")
+
+anti_match_sign_df <- dbGetQuery(conn = conn_mysql, 
+           statement = "SELECT first_name, last_name 
+           FROM customer 
+           WHERE first_name <> 'Steven' AND last_name <> 'Young'
+           ORDER BY first_name ASC
+           LIMIT 10")
+
+anti_match_not_equal_df <- dbGetQuery(conn = conn_mysql, 
+           statement = "SELECT first_name, last_name 
+           FROM customer 
+           WHERE first_name != 'Steven' AND last_name != 'Young'
+           ORDER BY first_name ASC
+           LIMIT 10")
+
+all_equal(anti_match_not_df, anti_match_sign_df) #TRUE
+```
+
+
+## Delete rows using filter conditions
+
+Note that committing these queries will permanently alter the data set and so the default auto-commit mode of the MySQL server should be changed so that these modifications can be 
+undone. 
+
+```{r delete_rows, echo=F}
+delete_query <- 'DELETE FROM rental
+WHERE year(rental_date) <> 2005 AND year(rental_date) <> 2006'
+```
+
+##The BETWEEN operator
+
+Note that the lower limit should be specified first and the upper limit should be specified second. Also note that the `BETWEEN` operator includes values that match the the upper and
+lower limits as valid. When working with dates, the inclusive nature of the `BETWEEN` operator is unintuitive. For example, to select films rented on either June 14 or June 15, the 
+query must state `2005-06-14` as the lower limit and `2005-06-16` as the upper limit because, by default, dates begin on the first minute of the day (i.e., midnight). The `BETWEEN` operator can be used to specify ranges of dates, numbers, and strings. 
+
+```{r between_operator, echo=F}
+#date range
+dbGetQuery(conn = conn_mysql, 
+           statement = "SELECT customer_id, rental_date 
+           FROM rental 
+           WHERE rental_date BETWEEN '2005-06-14' AND '2005-06-16'
+           LIMIT 10")
+
+#string range 
+dbGetQuery(conn = conn_mysql, 
+           statement = "SELECT last_name, first_name 
+           FROM customer 
+           WHERE first_name BETWEEN 'Fa' AND 'Fr'
+           LIMIT 10")
+
+#numeric range
+dbGetQuery(conn = conn_mysql, 
+           statement = "SELECT customer_id, payment_date, amount
+           FROM payment 
+           WHERE amount BETWEEN 10.0 AND 11.99
+           LIMIT 10")
+```
+
+### The IN operator
+
+The `IN` operator is an efficient way to match to multiple conditions and can also be used to filter subqueries and be used in conjunction with the `IN` operator. The 
+
+```{r in_operator, echo=F}
+#matching multiple conditions 
+dbGetQuery(conn = conn_mysql, 
+           statement =  "SELECT title, rating
+           FROM film
+           WHERE rating IN ('G','PG')
+           LIMIT 10")
+
+#filtering a subquery; 
+dbGetQuery(conn = conn_mysql, 
+           statement = "SELECT title, rating 
+           FROM film 
+           WHERE rating IN (SELECT rating 
+               FROM film
+               WHERE title LIKE '%Pet')
+           LIMIT 10")
+
+#NOT IN query 
+dbGetQuery(conn = conn_mysql, 
+           statement = "SELECT title, rating
+           FROM film 
+           WHERE rating NOT IN ('PG-13', 'R', 'NC-17')
+           LIMIT 10")
+```
+
+## Matching conditions
+
+Wildcard characters can be used in queries to filter for the several below components:
+
+* Strings beginning/ending with a certain character or substring. 
+* Strings containing character/substring. 
+* Strings with a specific format.
+
+\noindent
+Regular expressions provide the most flexibility for filtering rows. 
+```{r matching_conditions, echo=F}
+#string with a specific format
+dbGetQuery(conn = conn_mysql, 
+           statement = "SELECT last_name, first_name 
+           FROM customer 
+           WHERE last_name LIKE '_A_T%S'")
+
+#regular expression that finds people with last names beginning with either Q or Y
+dbGetQuery(conn = conn_mysql, 
+           statement = "SELECT last_name, first_name 
+           FROM customer 
+           WHERE last_name REGEXP '^[QY]'")
+
+```
+
+## NULL values
+
+NULL values are used in instances when values are not applicable (e.g., employee ID value for a transaction that occurred at an ATM), values that are not yet known (e.g., return
+date for a film), and when values are undefined (e.g., an account that is created for a product that has not yet been added to the database). NULL values behave differently from other 
+values in the following ways:
+
+1) An expression can never equal null; they can only *be* null (which is tested with `IS NULL`). 
+2) Two nulls are never equal to each other. 
+
+```{r null_queries, echo=F}
+dbGetQuery(conn = conn_mysql, 
+           statement = "SELECT rental_id, customer_id
+           FROM rental 
+           WHERE return_date IS NULL
+           LIMIT 10")
+
+#find all rentals that were returned outside of May-August 2005 and that were not returned outside of this period
+dbGetQuery(conn = conn_mysql,
+           statement = "SELECT rental_id, customer_id
+           FROM rental 
+           WHERE return_date NOT BETWEEN '2005-05-01' AND '2005-09-01'
+           OR return_date IS NULL
+           LIMIT 10")
+```
+
+## Practice
+
+```{r filtering_practice, echo=F}
+#Q1
+dbGetQuery(con = conn_mysql, 
+statement = "SELECT payment_id, customer_id, amount, date(payment_date)
+FROM payment 
+WHERE payment_id BETWEEN 101 AND 120 AND
+(amount > 8 OR date(payment_date) = '2005-08-23')")
+
+#Q3: Construct a query that retrieves all rows from the payments table where the amount is either 1.98, 7.98, or 9.98.
+dbGetQuery(conn = conn_mysql, 
+           statement = "SELECT payment_id, amount, date(payment_date)
+           FROM payment
+           WHERE amount IN (1.98, 7.98, 9.98)")
+
+#Q4. Construct a query that finds all customers whose last name contains an A in the second position and a W anywhere after the A.
+##Note that % includes any number of characters (including zero).
+dbListTables(conn = conn_mysql)
+dbGetQuery(conn = conn_mysql, 
+           statement = "SELECT customer_id, first_name, last_name 
+           FROM customer 
+           WHERE last_name LIKE '_A%W%'")
+```
+
+
+# Chapter 5: Querying multiple tables 
+## Inner joins
+
+When querying data, information is often obtained from multiple tables using the `JOIN` and `ON` clauses. The query below obtains the names and addresses of all customers by finding
+cases where rows in the `customer` and `address` tables have the same addresses. Note that, although the MySQL server computes inner joins by default, it is good practice to specify the
+type of join. Although the below inner join can also be accomplished using the `WHERE` clause, this method is not portable across servers and loses clarity when more than two tables are
+queried. Additionally, the second join method is not clear on the type of join being used. 
+
+```{r, inner_join, echo=F}
+multi_table_join_1 <- dbGetQuery(conn = conn_mysql, 
+           statement = "SELECT c.first_name, c.last_name, a.address
+           FROM customer AS c
+           INNER JOIN address AS a 
+           ON c.address_id = a.address_id")
+
+multi_table_join_2 <- dbGetQuery(conn = conn_mysql, 
+           statement = "SELECT c.first_name, c.last_name, a.address
+           FROM customer AS c, address AS a
+           WHERE c.address_id = a.address_id")
+
+multi_table_join_3 <- dbGetQuery(conn = conn_mysql, 
+           statement = "SELECT c.first_name, c.last_name, a.address
+           FROM customer AS c 
+           INNER JOIN address AS a
+           ON c.address_id = a.address_id
+           WHERE a.postal_code = 52137")
+
+all_equal(multi_table_join_1, multi_table_join_2, multi_table_join_3)
+
+dbGetQuery(conn = conn_mysql, 
+           statement = "SELECT c.first_name, c.last_name, a.address
+           FROM customer AS c
+           INNER JOIN address AS a 
+           ON c.address_id = a.address_id")
+```
+
+### Joining three of more tables
+
+We need two specify two join types and use two `ON` subclauses when joining three tables. A three-table query is needed to obtain the city in which each customer resides. The `address_id`
+foreign key column is first needed to traverse from the `customer` to the `address` table, at which point the `city_id` foreign key is used to traverse from the `address` table to the 
+`city` table. Note that this query can be achieved using any of the following three queries. In each query, it is best to conceptualize the query as cutting the result set each time 
+an inner join is computed. 
+
+```{r three_join_query, echo=F}
+#first: querying customer --> address --> city 
+dbListFields(conn = conn_mysql, name = 'city')
+straight_join_1 <- dbGetQuery(conn = conn_mysql, 
+           statement = "SELECT cust.first_name, cust.last_name, a.address, c.city
+           FROM customer AS cust
+           INNER JOIN address AS a
+           ON cust.address_id = a.address_id
+           INNER JOIN city AS c
+           ON a.city_id = c.city_id")
+
+#second: querying city --> address --> customer
+straight_join_2 <- dbGetQuery(conn = conn_mysql, 
+           statement = "SELECT cust.first_name, cust.last_name, a.address, c.city
+           FROM city AS c
+           INNER JOIN address AS a
+           ON a.city_id = c.city_id
+           INNER JOIN customer AS cust
+           ON cust.address_id = a.address_id")
+
+#third: querying address --> city --> customer 
+straight_join_3 <- dbGetQuery(conn = conn_mysql, 
+           statement = "SELECT cust.first_name, cust.last_name, a.address, c.city
+           FROM address AS a
+           INNER JOIN city AS c
+           ON a.city_id = c.city_id 
+           INNER JOIN customer AS cust
+           ON a.address_id = cust.address_id")
+
+all_equal(straight_join_1, straight_join_2, straight_join_3) #TRUE 
+```
+
+\noindent
+Each of the above queries return the same result set because SQL is a nonprocedural language: That is, SQL determines how to best execute the query. The MySQL server determines the 
+driving table using statistics in the `sakila` database and then determines the order in which to determine the remaining tables. Note that the `STRAIGHT_JOIN` keyword can be used
+if you want to ensure the joins follow a particular order (note that, in any of the above cases, forcing the join to follow by nominal order produces the same result set).
+
+```{r straight_join, echo=F}
+#customer --> address --> city 
+dbGetQuery(conn = conn_mysql, 
+           statement = " SELECT STRAIGHT_JOIN cust.first_name, cust.last_name, c.city 
+           FROM customer AS cust
+           INNER JOIN address AS a
+           ON cust.address_id = a.address_id
+           INNER JOIN city AS c
+           ON a.city_id = c.city_id")
+
+#querying city --> address --> customer
+dbGetQuery(conn = conn_mysql, 
+           statement = " SELECT STRAIGHT_JOIN cust.first_name, cust.last_name, c.city 
+           FROM city AS c
+           INNER JOIN address AS a
+           ON c.city_id = a.city_id
+           INNER JOIN customer AS cust
+           ON a.address_id = c.address_id")
+
+#third: querying address --> city --> customer 
+
+
+
+
+```
+
+### Using the same table twice
+
+The query below finds all films in which either the actors Cate McQueen or Cuba Birch appeared. The result set will include the actor's name (`first_name`, `last_name`) and the film name
+(`title`). The second query finds the films in which both actors appeared. 
+
+```{r query_same_table, echo=F}
+dbGetQuery(conn = conn_mysql, 
+           statement = "SELECT a.first_name, a.last_name, f.title
+           FROM film AS f
+           INNER JOIN film_actor AS fa
+           ON f.film_id = fa.film_id
+           INNER JOIN actor AS a
+           ON fa.actor_id = a.actor_id
+           WHERE (a.first_name = 'Cate' AND a.last_name = 'McQueen') OR 
+           (a.first_name = 'Cuba' AND a.last_name = 'Birch')
+           LIMIT 10")
+
+#find films in which both actors appear 
+dbGetQuery(conn = conn_mysql, 
+           statement = "SELECT f.title, a1.first_name, a1.last_name, a2.first_name, a2.last_name
+           FROM film AS f
+           INNER JOIN film_actor AS fa1
+           ON f.film_id = fa1.film_id
+           INNER JOIN actor AS a1
+           ON fa1.actor_id = a1.actor_id
+           INNER JOIN film_actor AS fa2
+           ON f.film_id = fa2.film_id
+           INNER JOIN actor AS a2
+           ON fa2.actor_id = a2.actor_id
+           WHERE (a1.first_name = 'CATE' AND a1.last_name = 'MCQUEEN')
+           AND (a2.first_name = 'CUBA' AND a2.last_name = 'BIRCH')")
+```
+
+## Self joins
+
+```{r self_join, echo=F}
+dbGetQuery(conn = conn_mysql, 
+           statement = "DESC film")
+
+```
+
+## Exercises
+```{r querying_tables_questions, echo=F}
+#2. Write a query that returns the title of every film in which an actor with the first name JOHN appeared.
+dbListFields(conn = conn_mysql, name = 'city')
+dbListTables(conn = conn_mysql)
+dbGetQuery(conn = conn_mysql, 
+           statement = "SELECT f.title, a.first_name, a.last_name
+           FROM film AS f
+           INNER JOIN film_actor AS fa
+           ON f.film_id = fa.film_id
+           INNER JOIN actor AS a
+           ON fa.actor_id = a.actor_id
+           WHERE a.first_name = 'John'")
+
+#3. Construct a query that returns all addresses that are in the same city. You will need to join the address table to itself, and each row should include two different addresses.
+dbGetQuery(conn = conn_mysql, 
+           statement = "SELECT a1.address, a2.address, c.city
+           FROM address AS a1
+           INNER JOIN address AS a2
+           ON a1.city_id = a2.city_id AND
+           a1.address_id != a2.address_id
+           INNER JOIN city AS c
+           ON a1.city_id = c.city_id
+           ")
+
+#4. Find films in which both actors Cate McQueen and Cuba Birch appear 
+dbListFields(conn = conn_mysql, name = 'film_actor')
+#first, we find all rows in the film table that have at least two rows in the film_actor table
+dbGetQuery(conn = conn_mysql, 
+           statement = "SELECT f.title, a1.first_name, a1.last_name, a2.first_name, a2.last_name
+           FROM film AS f
+           INNER JOIN film_actor AS fa1
+           ON f.film_id = fa1.film_id  
+           INNER JOIN actor AS a1
+           ON fa1.actor_id = a1.actor_id
+           
+           INNER JOIN film_actor AS fa2
+           ON f.film_id = fa2.film_id
+           INNER JOIN actor AS a2
+           ON fa2.actor_id = a2.actor_id #produces all possible two-actor combinations for each film 
+           WHERE (a1.first_name = 'CATE' AND a1.last_name = 'MCQUEEN')
+           AND (a2.first_name = 'CUBA' AND a2.last_name = 'BIRCH')")
+```
+
+
+# Chapter 6: Working with sets
+
+To perform set operations across two or more data sets, each data set must have the same number of rows and the data types of each column across the two data sets must be the same (or 
+the server must be able to convert one to the other). 
+
+## Set operators
+### The UNION operator
+
+Use `UNION` operator removes duplicates and the `UNION ALL` operator does not. The query below selects all the customer and actor names and creates a new column to track the type of 
+name (i.e., `CUST` OR `ACTR`). The second query performs the same computation, but only finds instances where the first and last names begin with 'J' and 'D', respectively. Note that,
+if the column delineating the type of observation was included in the second query, then there would be 5 rows instad of four because Jennifer Davis is a name contained in the `actor` and
+`customer` tables.
+
+```{r union_operator, echo=F}
+dbGetQuery(conn = conn_mysql, 
+           statement = "SELECT 'CUST' typ, c.first_name, c.last_name 
+           FROM customer AS c
+           UNION
+           SELECT 'ACTR' typ, a.first_name, a.last_name 
+           FROM actor AS a")
+
+dbGetQuery(conn = conn_mysql, 
+           statement = "SELECT c.first_name, c.last_name 
+           FROM customer AS c
+           WHERE c.first_name LIKE 'J%' AND c.last_name LIKE 'D%'
+           UNION
+           SELECT a.first_name, a.last_name 
+           FROM actor AS a
+           WHERE a.first_name LIKE 'J%' AND a.last_name LIKE 'D%'")
+```
+
+### The INTERSECT operator (INNER JOIN in MySQL)
+
+The `INTERSECT` operator has been discontinued and so more clever ways of computing it must be devised. The following query finds actor and customer names that exist in both tables and
+where the first name begins with 'J' and the last name begins with 'D'. 
+
+```{r pseudo_intersect, echo=F}
+dbGetQuery(conn = conn_mysql, 
+           statement = "SELECT a.first_name, a.last_name
+           FROM actor AS a
+           INNER JOIN customer AS c
+           ON a.first_name = c.first_name AND a.last_name = c.last_name
+           WHERE a.first_name LIKE 'J%' AND a.last_name LIKE 'D%' 
+           ")
+```
+
+### The EXCEPT operator (LEFT JOIN in MySQL)
+
+Like the `INTERSECT` operator, MySQL does not use the `EXCEPT` operator. In Oracle, the minus sign must be used. Nonetheless, workarounds can be generated to compute the `EXCEPT`
+operator, which returns observations unique to a result set. The below query finds names in the `actor` and `customer` tables where the first name begins with 'J' and the last name begins with 'D' that that are unique to the `actor` table.  
+
+```{r pseudo_intersect, echo=F}
+#query does not eliminate names in both tables
+dbGetQuery(conn = conn_mysql, 
+           statement = "SELECT a.first_name, a.last_name
+           FROM actor AS a
+           LEFT JOIN customer AS c 
+           ON a.first_name = c.first_name and a.last_name = c.last_name
+           WHERE (a.first_name LIKE 'J%' AND a.last_name LIKE 'D%')")
+
+```
+
+## Set operation rules
+
+You can only order by column names in the first query. Therefore, give the same alias names to column names in each query. 
+
+```{r sorting_compound_queries, echo=F}
+dbGetQuery(conn = conn_mysql, 
+           statement = "SELECT a.first_name AS fname, a.last_name AS lname
+           FROM actor AS a
+           WHERE a.first_name LIKE 'J%' AND a.last_name LIKE 'D%'
+           UNION
+           SELECT c.first_name AS fname, c.last_name AS lname
+           FROM customer AS c
+           WHERE c.first_name LIKE 'J%' AND c.last_name LIKE 'D%'
+           ORDER BY lname, fname")
+
+```
+
+## Set operation precedence
+
+# Chapter 7: Data generation, manipulation, and conversion
+
+## Working with string data
+
+The following types of string data will be encountered in working with strings:
+
+1) `CHAR`: Each cell holds a string of a fixed length with padding. In MySQL, each cell has a limit of 255 characters. In Oracle Database, each cell has a limit of 2 000 characters.
+2) `VARCHAR`: The length of characters can vary across cells, with the limit of each cell being 65 535 in MySQL.
+2) `TEXT`: Used when each cell holds a large variable-length string. In MySQL, the limit is 4 GB. 
+
+\noindent
+The below query creates a table that has one CHAR-type column with a character length of 30, a VCHAR-type column of character length 30, and a TEXT-type field. 
+
+```{r create_string_table, echo=F}
+dbExecute(conn = conn_mysql, 
+          statement = "CREATE TABLE string_tbl
+          (char_fld CHAR (30),
+          vchar_fld VARCHAR (30),
+          text_fld TEXT)")
+
+```
+
+### String generation
+
+Let's now insert a row into the `string_tbl` table. Note that an error will be returned when trying to insert a string that exceeds the table limit. The default procedure for handling
+insertions that are too long is to return an error. Note that this can be changed by modifying `session.sql_model` to `ansi`, which will truncate strings according to the character limit
+and issue a warning. Note that the escape character of a single quotation mark (`'`) or two backslashes (`\\`; MySQL, Oracle Database) can be used to insert strings with quotes and/or
+apostrophes. If you want to take string data from one table for later use, use the `quote()` function. 
+
+```{r insert_string_data, echo=F}
+dbExecute(conn = conn_mysql, 
+          statement = "INSERT INTO string_tbl (char_fld, vchar_fld, text_fld) 
+          VALUES ('This is char data1',
+          'This is varchar data',
+          'This is text data')")
+
+dbGetQuery(conn = conn_mysql, 
+           statement = "SELECT @@session.sql_mode")
+
+dbExecute(conn = conn_mysql, 
+           statement = "SET sql_mode = 'ansi'")
+
+dbExecute(conn = conn_mysql, 
+          statement = "UPDATE string_tbl
+          SET vchar_fld = 'This is a piece of extremely long varchar data'")
+
+dbExecute(conn = conn_mysql, 
+          statement = "UPDATE string_tbl
+          SET vchar_fld = 'This string doesn\\'t work'")
+
+dbGetQuery(conn = conn_mysql, 
+           statement = "SELECT * FROM string_tbl")
+
+dbGetQuery(conn = conn_mysql, 
+           statement = "SELECT quote(vchar_fld) FROM string_tbl")
+```
+
+
+#### Including special characters
+
+Special characters can be accessed from the ASCII character set using the `char()` function. Because special characters are often rarely encountered, it is useful to use `char()` in 
+conjunction with the `concat()` function or the concatenation operator (`||`) in Oracle Database. The `SCHEMATA` table in `information_schema` database contains the character sets used
+in each database and the `TABLES` table lists the character sets used in each table of each database. 
+
+```{r special_characters, echo=F}
+#sakila database has utf8mb4 encoding
+dbGetQuery(conn = conn_mysql, 
+           statement = "
+           SELECT DEFAULT_CHARACTER_SET_NAME FROM SCHEMATA 
+           WHERE schema_name = 'sakila'") 
+
+#checking character encoding for a specific table in the sakila database 
+dbGetQuery(conn = conn_mysql, 
+           statement = "SELECT * FROM TABLES")
+
+
+#example concatenation
+dbGetQuery(conn = conn_mysql, statement = 'USE sakila')
+dbGetQuery(conn = conn_mysql, 
+           statement = "SELECT CONCAT('danke sch', CHAR (148), 'n')")
+dbGetQuery(conn = conn_mysql, 
+           statement = "SELECT ASCII('ö')")
+
+```
+
+### String manipulation 
+
+Note that the `LENGTH()` function removes the trailing spaces in the `char_fld` column. We can also find the position of a specific target string (note that the starting position is 
+returned) using `POSITION()` and its relative position with respect to the beginning and indexed from a specific position using `LOCATE()`. 
+
+```{r string_manipulation, echo=F}
+dbExecute(conn = conn_mysql,
+          statement = "DELETE FROM string_tbl")
+
+dbExecute(conn = conn_mysql, 
+          statement = "INSERT INTO string_tbl (char_fld, vchar_fld, text_fld)
+          VALUES ('This string is 28 characters',
+          'This string is 28 characters',
+          'This string is 28 characters')")
+
+#use LENGTH() to determine length of each cell 
+dbGetQuery(conn = conn_mysql, 
+           statement = "SELECT LENGTH(char_fld) char_length,
+           LENGTH(vchar_fld) varchar_length,
+           LENGTH(text_fld) text_length 
+           FROM string_tbl")
+
+dbGetQuery(conn = conn_mysql, 
+           statement = "SELECT POSITION('is' IN vchar_fld) 
+           FROM string_tbl")
+
+
+#finds location of 'is' character beginning from the seventh position; note that the value returned (13) is from the beginning of the string
+dbGetQuery(conn = conn_mysql,
+           statement = "SELECT LOCATE('is', vchar_fld, 7) 
+           FROM string_tbl")
+```
+
+#### String functions that return strings
+
+The `concat()` function can be used to combine data from tables into strings. Note how `concat()` converts dates and numbers to strings. Use the `insert()` function to add or replace 
+characters in the middle of a string and note that the third argument specifies the number of characters to replace. If this argument is zero, no characters are replaced and
+characters are shifted to the right. The `substring()` function extracts a specific number of characters beginning from a specific position.
+
+```{r string_concatenation_extraction, echo=F}
+dbExecute(conn = conn_mysql, 
+          statement = "DELETE FROM string_tbl")
+
+dbExecute(conn = conn_mysql, 
+          statement = "INSERT INTO string_tbl (text_fld)
+          VALUES ('This string was 29 characters')")
+
+#updating cell with concat()
+dbExecute(conn = conn_mysql, 
+          statement = "UPDATE string_tbl
+          SET text_fld = concat(text_fld, ', but now it is longer')")
+
+#combining data from table with concat()
+dbGetQuery(conn = conn_mysql,
+           statement = "SELECT concat(first_name, ' ', last_name, ' has been a customer since ', date(create_date)) cust_narrative
+           FROM customer")
+
+#inserts the word 'cruel' after goodbye (ninth position)
+dbGetQuery(conn = conn_mysql, 
+           statement = "SELECT INSERT('goodbye world', 9, 0, 'cruel ') string")
+
+#7 characters are replaced (the length of the string 'goodbye')
+dbGetQuery(conn = conn_mysql, 
+           statement = "SELECT INSERT('goodbye world', 1, 7, 'hello') string")
+
+#extracts five characters after the ninth position (conceptualize this a programming a sliding window)
+dbGetQuery(conn = conn_mysql, 
+           statement = "SELECT substring('goodbye world', 9, 5)")
+```
+
+## Working with numeric data
+
+The following functions may be useful when working with numbers:
+
+1) `mod()` computes the remainder of a division. 
+2) `pow(2, 8)` computes  $2^8$
+3) `ceil(72.1)` rounds up to 73. 
+4) `floor(72.1)` rounds down to 72. 
+5) `round(72.1153, 2)` rounds according to two decimal places. 
+5) `truncate(72.1153, 2)` simply reports the number without rounding. 
+
+## Working with temporal data
+
+The query below checks the time zone of the database and of the current session. The result of `SYSTEM` indicates that the server is using the time zone setting that the database is 
+using. The second query shows how to access the value of the current time zone. 
+
+```{r time_zones, echo=F}
+dbGetQuery(conn = conn_mysql, 
+           statement = "SELECT @@global.time_zone, @@session.time_zone")
+
+#The system time zone is Eastern Time (EDT)
+dbGetQuery(conn = conn_mysql, 
+           statement = "SHOW variables 
+           WHERE variable_name = 'system_time_zone'")
+
+#change time zone for session to Zurich 
+dbGetQuery(conn = conn_mysql, 
+          statement = "SET time_zone = '-4:00'")
+```
+
+### Generating temporal data
+
+When inserting dates into cells, the expected format must be followed. The first query checks the format of the `return_date` column (`datetime`) and the second query insert a datum that follows this format.
+
+```{r datetime_formats, echo=F}
+knitr::include_graphics(path = 'figures/datetime.png')
+```
+
+```{r generating_time_data, echo=F}
+dbGetQuery(conn = conn_mysql,
+           statement = "DESC rental")
+
+dbExecute(conn = conn_mysql, 
+          statement = "UPDATE rental
+          SET return_date = '2019-09-17 15:30:00' 
+          WHERE rental_id = 99999")
+```
+
+# Chapter 8: Grouping and aggregates
+
+## Grouping concepts
+
+Although data are generally stored at their lowest level, we often need to analyze data at higher levels. To group data, use the `GROUP BY` clause. The query below counts the number of 
+films rented by each customer. When dealing with groups, note that the `HAVING` keyword must be used instead of the `WHERE` keyword because `WHERE` must be placed before `GROUP BY`. 
+
+```{r grouping_data, echo=F}
+dbGetQuery(conn = conn_mysql, 
+           statement = "SELECT c.first_name, c.last_name, count(*) AS num_films_rented
+           FROM rental AS r
+           INNER JOIN customer AS c
+           ON r.customer_id = c.customer_id
+           GROUP BY r.customer_id
+           HAVING num_films_rented > 40
+           ORDER BY num_films_rented DESC
+           ")
+
+```
+
+## Aggregate functions
+
+The query below computes the following values for each customer: 
+
+1) Minimum and maximum payment amounts of each customer (i.e., many instances where customers rent several films at once).
+2) Average payment amount of each customer.
+3) Total (sum) amount of money spent by each customer.
+4) The number of films rented. 
+
+```{r aggregate_functions, echo=F}
+dbListFields(conn = conn_mysql, name = 'payment')
+
+dbGetQuery(conn = conn_mysql, 
+           statement = "SELECT c.first_name, c.last_name, 
+           avg(amount) AS avg_payment_amount, 
+           max(amount) AS max_payment_amount,
+           min(amount) AS min_payment_amount, 
+           sum(amount) AS total_money_spent,
+           count(*) AS num_films_rented
+           FROM rental AS r
+           INNER JOIN customer AS c
+           ON r.customer_id = c.customer_id
+           INNER JOIN payment AS p
+           ON c.customer_id = p.customer_id
+           GROUP BY r.customer_id
+           HAVING num_films_rented > 40
+           ORDER BY num_films_rented DESC")
+```
+
+### Counting distinct values
+
+Using `DISTINCT` with `COUNT` is used in the below query to get the sum of rentals for each customer, the number of times each rental value is observed, and the average amount of money
+spent in each rental group. In interpreting this result set, we can see that 54 customers rented 26 movies and contributed $5840.96 in revenues. 
+
+```{r distinct_count, echo=F}
+dbListFields(conn = conn_mysql, name = 'payment')
+dbGetQuery(conn = conn_mysql, 
+           statement = "SELECT cust.num_rentals, count(*) AS rental_group_size, sum(cust.amount) AS rental_group_revenue 
+           FROM (SELECT count(*) AS num_rentals, sum(amount) AS amount
+           FROM payment
+           GROUP BY customer_id) AS cust
+           GROUP BY cust.num_rentals
+           ORDER BY rental_group_size DESC")
+```
+
+### Using expressions 
+
+Expressions can be used when aggregating to extract more nuanced information from a data set. For example, the query below produces a result set that computes the average return time
+for each customer and then computes the frequency with which each value is observed across all customers. 
+
+```{r using_expressions, echo=F}
+dbGetQuery(conn = conn_mysql, 
+           statement = "SELECT cust.avg_return_time, count(*) AS return_time_freq FROM 
+           (SELECT round(avg(datediff(return_date, rental_date)), 1) AS avg_return_time
+           FROM rental AS r
+           GROUP BY r.customer_id) AS cust
+           GROUP BY cust.avg_return_time")
+
+```
+
+### How nulls are handled 
+
+Like telling arithmetic functions in R to ignore NA values. The below query counts the number of NULL values in the `payment_date` column. 
+
+```{r counting_nulls, echo=F}
+dbGetQuery(conn = conn_mysql, 
+           statement = "SELECT count(*) FROM payment
+           WHERE payment_date IS NULL")
+
+```
+
+## Generating groups
+#### Grouping via expressions
+
+The query below groups via the year of the rental date. 
+
+```{r group_expression, echo=F}
+dbGetQuery(conn = conn_mysql,
+           statement = "SELECT extract(YEAR FROM rental_date) AS year, COUNT(*) AS num_rentals
+           FROM rental
+           GROUP BY year")
+```
+### Generating rollups
+
+Use the `rollup` keyword to get the total number of counts across all groups specified by the `GROUP BY` clause. The query below counts the number of films each actor appears in and also returns the total number of films (i.e., the sum of all the values in the `num_films` column). 
+
+```{r rollups, echo=F}
+dbGetQuery(conn = conn_mysql, 
+           statement = "SELECT fa.actor_id, count(*) AS num_films
+           FROM film_actor AS fa
+           INNER JOIN film AS f
+           ON fa.film_id = f.film_id
+           GROUP BY fa.actor_id")
+```
+
+
+## Exercises 
+
+```{r chapter_8_exercises, echo=F}
+#Construct a query that counts the number of rows in the payment table.
+dbGetQuery(conn = conn_mysql,
+           statement = "SELECT COUNT(*) AS num_rows FROM payment")
+
+#Modify your query from Exercise 8-1 to count the number of payments made by each customer. Show the customer ID and the total amount paid for each customer.
+dbGetQuery(conn = conn_mysql,
+           statement =  "SELECT COUNT(*) AS num_payments 
+           FROM payment 
+           GROUP BY customer_id")
+
+#Modify your query from Exercise 8-2 to include only those customers who have made at least 40 payments.
+dbGetQuery(conn = conn_mysql,
+           statement =  "SELECT COUNT(*) AS num_payments 
+           FROM payment 
+           GROUP BY customer_id
+           HAVING num_payments >= 40
+           ORDER BY num_payments")
+```
+
+# Chapter 9: Subqueries
+
+Subqueries are often needed when dealing with large data sets to free up memory. Instead of storing a result set in temporary memory, the result set can be generated within a query that
+is then inserted into another query. By using subqueries, the data contained in them disappears after the query is finished computing. 
+
+```{r noncorrelated_subqueries, echo=F}
+#Note that 
+dbGetQuery(conn = conn_mysql, 
+           statement = "SELECT city_id, city
+           FROM city
+           WHERE country_id NOT IN
+           (SELECT country_id FROM country WHERE country <> 'India')")
+
+```
+
+#### The ALL operator
+
+The `ALL` operator makes comparisons between a single value and every value in a set. For example, the below query finds all customers who have never gotten a free film rental. Note that
+the query can also be computed using `NOT`. Note that NULL values should be watched out for because a comparison between a value and a NULL value yields `unknown`.
+
+```{r all_operator, echo=F}
+dbGetQuery(conn = conn_mysql, 
+           statement = "SELECT first_name, last_name 
+           FROM customer 
+           WHERE customer_id <> ALL
+           (SELECT customer_id 
+           FROM payment 
+           WHERE amount = 0)")
+
+dbGetQuery(conn = conn_mysql, 
+           statement = "SELECT first_name, last_name 
+           FROM customer 
+           WHERE customer_id NOT IN
+           (SELECT customer_id 
+           FROM payment 
+           WHERE amount = 0 OR amount)")
+
+#The subquery in this example returns the total number of film rentals for all customers in North America, and the containing query returns all customers whose total number of film rentals exceeds any of the North American customers.
+dbListFields(conn = conn_mysql, name = 'customer')
+dbGetQuery(conn = conn_mysql,
+           statement = "SELECT c.first_name, c.last_name, cty.city, cnty.country, count(*) AS num_rentals
+           FROM rental AS r
+           INNER JOIN customer AS c
+           ON r.customer_id = c.customer_id
+           INNER JOIN address AS a
+           ON c.address_id = a.address_id
+           INNER JOIN city AS cty
+           ON a.city_id = cty.city_id
+           INNER JOIN country AS cnty
+           ON cty.country_id = cnty.country_id
+           #WHERE cnty.country NOT IN ('Canada', 'United States', 'Mexico')
+           GROUP BY r.customer_id
+           
+           HAVING num_rentals > ALL
+           (SELECT count(*) FROM rental AS r
+           INNER JOIN customer AS c
+           ON r.customer_id = c.customer_id
+           INNER JOIN address AS a
+           ON c.address_id = a.address_id
+           INNER JOIN city AS cty
+           ON a.city_id = cty.city_id
+           INNER JOIN country AS cnty
+           ON cty.country_id = cnty.country_id
+           WHERE cnty.country IN ('Canada', 'United States', 'Mexico')
+           GROUP BY r.customer_id)")
+
+```
+
+#### The ANY operator
+
+The `ANY` operator can be thought as setting a more lenient evaluator than the `ALL` operator. Instead of comparing a single value to each value in a set and only returning the value if
+if differs from each set value in the desired way, the `ANY` operator returns a value if it differs from any single set value in the desired way. The below query returns customers
+whose total payment amount exceeds any of the total payment amounts in Bolivia, Paraguay, or Chile. 
+
+```{r any_operator, echo=F}
+dbGetQuery(conn = conn_mysql, 
+           statement = "SELECT customer_id, sum(amount) FROM payment
+           GROUP BY customer_id
+           HAVING sum(amount) > ANY
+           (SELECT sum(p.amount) FROM payment p
+           INNER JOIN customer c
+           ON p.customer_id = c.customer_id INNER JOIN address a
+           ON c.address_id = a.address_id INNER JOIN city ct
+           ON a.city_id = ct.city_id
+           INNER JOIN country co
+           ON ct.country_id = co.country_id
+           WHERE co.country IN ('Bolivia','Paraguay','Chile')
+           GROUP BY co.country )")
+```
+
+### Multicolumn subqueries
+
+The query below finds all actors with first name 'Monroe' that star in a PG film. 
+
+```{r multicolumn_subquery, echo=F}
+dbListFields(conn = conn_mysql, name = 'film')
+dbGetQuery(conn = conn_mysql, 
+           statement = "SELECT a.first_name, a.last_name, f.rating, f.title
+           FROM actor AS a
+           INNER JOIN film_actor AS fa
+           ON a.actor_id = fa.actor_id
+           INNER JOIN film AS f
+           ON fa.film_id = f.film_id
+           WHERE a.last_name = 'Monroe' AND f.rating = 'PG'")
+
+```
+
+## Correlated subquery 
+
+Correlated subqueries are executed one for each candidate. The following query finds customers who rented 20 movies. Note how a correlated subquery is needed so that the `num_rentals`
+column is not returned. Also note that, because each customer ID is compared to 20, correlated subqueries can be computationally demanding when the subquery size is large. As a last
+note, the `GROUP BY` clause is not needed in the correlated subquery because it is implicitly understood (I have included it for clarity). 
+
+
+```{r correlated_subquery, echo=F}
+#using no subquery 
+dbGetQuery(conn = conn_mysql,
+           statement = "SELECT c.first_name, c.last_name, count(*) as num_rentals 
+           FROM payment AS p
+           INNER JOIN customer AS c
+           ON p.customer_id = c.customer_id
+           GROUP BY p.customer_id
+           HAVING num_rentals = 20
+           ")
+
+#using correlated subquery 
+dbGetQuery(conn = conn_mysql, 
+           statement = "SELECT c.first_name, c.last_name 
+           FROM customer c
+           WHERE 20 = 
+           (SELECT count(*) FROM rental AS r
+           WHERE r.customer_id = c.customer_id
+           GROUP BY r.customer_id)")
+
+#find customers who spent between $180-$240 on film rentals 
+dbListFields(conn = conn_mysql, name = 'payment')
+
+dbGetQuery(conn = conn_mysql, 
+           statement = "SELECT c.first_name, c.last_name, sum(p.amount) AS revenue_sum
+           FROM customer AS c 
+           INNER JOIN payment AS p
+           ON c.customer_id = p.customer_id
+           GROUP BY c.customer_id 
+           HAVING revenue_sum BETWEEN 180 AND 240")
+
+#using subquery to find customers who spent between $180-$240 on film rentals 
+dbGetQuery(conn = conn_mysql, 
+           statement = "SELECT c.first_name, c.last_name
+           FROM customer AS c
+           WHERE
+           (SELECT sum(p.amount) AS revenue_sum
+           FROM payment AS p
+           WHERE p.customer_id = c.customer_id
+           GROUP BY p.customer_id) 
+           BETWEEN 180 AND 240")
+```
+
+### The EXISTS operator
+
+The `EXISTS` operator can be used to identify that a relationship exists without regard for quantity. The query below identifies customers who rented at least one film before May 25,
+2005. Note that the use of `SELECT 1` gets the number of rows that satisfy the condition. The `NOT` operator can also be used with `EXISTS` to find rows that do not meet a condition 
+described in a subquery. 
+
+```{r exists_operator, echo=F}
+dbListFields(conn = conn_mysql, name = 'rental')
+dbGetQuery(conn = conn_mysql, 
+           statement = "SELECT c.first_name, c.last_name 
+           FROM customer AS c
+           WHERE EXISTS
+           (SELECT 1 
+           FROM rental AS r
+           WHERE c.customer_id = r.customer_id
+           AND date(r.rental_date) < '2005-05-25')")
+
+
+#no subquery 
+dbGetQuery(conn = conn_mysql,
+           statement = "SELECT c.first_name, c.last_name 
+           FROM customer AS c
+           INNER JOIN rental AS r
+           ON c.customer_id = r.customer_id
+           WHERE date(r.rental_date) < '2005-05-25'")
+```
+
+## Data manipulation using correlated strategies
+
+Subqueries can also be used to update fields in tables. The query below updates the `last_update` column in the `customer` table to be the last time a customer rented a film. Note that 
+if any customer has not rented a film, a NULL value will be inserted into the corresponding row of the `last_update` column and overwrite potentially meaningful data. To prevent the 
+insertion of undesired NULL values, the latest values in the `rental` table could be checked for each customer or a more refined query could be generated.
+
+```{r manipulation_subquery1, echo=F}
+#to convert datetimes to NULL values, the corresponding has to first be enabled to take on null values
+dbExecute(conn = conn_mysql, 
+          statement = "ALTER TABLE rental MODIFY COLUMN rental_date DATETIME NULL")
+
+#set the rental_date values for the 1st customer to NULL 
+dbListFields(conn = conn_mysql, name = 'rental')
+dbExecute(conn = conn_mysql, 
+          statement = "UPDATE rental 
+          SET rental_date = NULL 
+          WHERE customer_id = 1")
+
+#count number of values in rental that are NULL for customer ID of 1 (check)
+dbGetQuery(conn = conn_mysql,
+           statement = "SELECT count(*) AS num_values
+           FROM rental 
+           WHERE rental_date IS NULL 
+           AND customer_id = 1")
+
+#let's now update the last_update field of the customer table using the latest rental date from each customer
+#set the latest rental_date for the 1st customer to NULL 
+dbExecute(conn = conn_mysql, 
+          statement = "UPDATE customer AS c 
+          SET c.last_update =
+          (SELECT max(r.rental_date) FROM rental AS r 
+          WHERE r.customer_id = c.customer_id 
+          GROUP BY r.customer_id)")
+
+#note the NULL value
+dbGetQuery(conn = conn_mysql,
+           statement = "SELECT last_update, customer_id FROM customer WHERE customer_id")
+```
+
+Another way to prevent NULL values from appearing while updating cells is to construct a query with a correlated subquery. The second subquery is computed for each row in `last_update` 
+and checks whether each customer has at least one rental. 
+
+```{r manipulation_subquery2, echo=F}
+#to prevent the occurrence of NULL values, use the following more advanced query 
+dbGetQuery(conn = conn_mysql,
+           statement = "UPDATE customer AS c 
+           SET c.last_update =
+           (SELECT max(r.rental_date) FROM rental AS r
+           WHERE r.customer_id = c.customer_id
+           GROUP BY r.customer_id)
+           
+           WHERE EXISTS
+           (SELECT 1 FROM rental AS r
+           WHERE r.customer_id = c.customer_id
+           GROUP BY r.customer_id)")
+```
+
+Correlated subqueries can also be used to delete data. Deleting data is often needed to maintain a database. For example, customers who have not rented a film in the past year can be 
+deleted as shown in the below query. More specifically, the last rental date is calculated for each customer and the time that has elapsed since then it computed. If this value is
+greater than 365 days, then the value is deleted. In trying to delete customers who have not rented films in the past year, the first query cannot delete the rows because of a foreign
+key constraint of `customer_id` values in the `customer` on the `customer_id` values in the `payment` table. That is, the `customer_id` values in the `payment` table can only be from the
+values in the `customer_id` table. Therefore, if we try deleting `customer_id` values in the `customer` table, then the `payment` table would then contain `customer_id` values not 
+contained in the `customer` table. Although, the `customer_id` values deleted out of the `customer` table would not be deleted out of the `rental` table. To ensure data does not remains
+from customers who have not rented films in the past year, we can check the .schema file for the creation of the tables and modify the foreign key constraints of the `payment` and 
+`rental` tables such that when `customer_id` values are deleted, this action cascades to all other tables with the `customer_id` column. 
+
+```{r delete_data, echo=F}
+#returns tables that contain customer_id column 
+dbGetQuery(conn = conn_mysql, 
+           statement = "SELECT DISTINCT TABLE_NAME 
+    FROM INFORMATION_SCHEMA.COLUMNS
+    WHERE COLUMN_NAME = 'customer_id'
+        AND TABLE_SCHEMA='sakila'")
+
+dbGetQuery(conn = conn_mysql, statement = "DESC payment")
+dbGetQuery(conn = conn_mysql, 
+           statement = "DELETE FROM customer
+           WHERE 365 < ALL
+           (SELECT datediff('2006-12-01', r.rental_date) days_since_last_rental 
+           FROM rental AS r
+           WHERE r.customer_id = customer.customer_id)")
+
+#check number of rows in customer table; all data are deleted
+dbGetQuery(conn = conn_mysql,
+           statement = "SELECT count(*) FROM customer")
+```
+
+## When to use subqueries
+### Subqueries as data sources
+
+Subquery is needed to group data before computing inner join. If we try linking all three tables (`payment`, `customer`, `rental`) and then grouping by `customer_id`, the query will
+return incorrect values for grouped calculations (e.g., the amount of money each customer spend on rentals). When joining these three tables, a table is created where each `rental_id` is
+multiplied by the number of `payment_id` values for each `customer_id`. For example, customer 1 made 32 payments and had 32 rentals, so a joining these three tables would create 32 x 32
+= 1024 for customer 1. When `GROUP BY customer_id` is used after joining the three tables, each payment amount is incorrectly multiplied by the number of associated rental values. 
+Errors in aggregation can be checked by grouping by the middle-level variable (e.g., `rental_id`). Essentially, these errors occur when data at the same level are joined. In this case,
+the `rental` and `payment` data sets are on the level of purchases. One easy way to avoid these errors is to not join tables at the same level, which can be accomplished using a 
+subquery. 
+
+By using subqueries, small sets of data can be used to join all three tables, thus solving the problem that was encountered using inner joins. 
+
+```{r subquery_data_source, echo=F}
+#get total revenue for each customer, first name, last name, and number of rentals
+dbListFields(conn = conn_mysql, name = 'rental')
+
+#the actual revenue per customer is being multiplied by the number of rentals and so is incorrect; this shows how the data is incorrectly aggregated
+dbGetQuery(conn = conn_mysql, 
+           statement = "SELECT c.customer_id, sum(amount) as revenue_incorrect
+           FROM customer AS c
+           INNER JOIN rental AS r
+           ON c.customer_id = r.customer_id
+           INNER JOIN payment AS p
+           ON r.customer_id = p.customer_id
+           GROUP BY r.rental_id")
+
+#Method 1: Ignore rental table
+dbGetQuery(conn = conn_mysql, 
+           statement = "SELECT c.customer_id, c.first_name, c.last_name, sum(amount) as revenue_correct
+           FROM customer AS c
+           INNER JOIN payment AS p
+           ON c.customer_id = p.customer_id
+           GROUP BY c.customer_id")
+
+#Method 2: Subquery
+dbGetQuery(conn = conn_mysql, 
+           statement = "SELECT c.first_name, c.last_name, pymnt.num_rentals, pymnt.tot_payments
+           FROM customer AS c
+           INNER JOIN
+           (SELECT customer_id, count(*) AS num_rentals, sum(amount) AS tot_payments
+           FROM payment
+           GROUP BY customer_id
+           ) AS pymnt
+           ON c.customer_id = pymnt.customer_id")
+
+#Method 2a: Using subqueries to join three data tables, with two tables at the same level 
+dbGetQuery(conn = conn_mysql, 
+           statement = "SELECT c.first_name, c.last_name, pymnt.num_rentals, pymnt.tot_payments, rent.latest_rental_date
+           FROM customer AS c
+           INNER JOIN 
+           (SELECT customer_id, count(*) AS num_rentals, sum(amount) AS tot_payments
+           FROM payment
+           GROUP BY customer_id
+           ) AS pymnt
+           ON c.customer_id = pymnt.customer_id
+           INNER JOIN 
+           (SELECT customer_id, max(rental_date) AS latest_rental_date 
+           FROM rental 
+           GROUP BY customer_id) AS rent
+           ON c.customer_id = rent.customer_id
+           ")
+```
+
+### Data fabrication
+
+Subqueries can also be used to generate data that does not exist in any form in the database. The query that follows produces a table that groups customers according to how much money 
+they have spent on film rentals. 
+
+```{r data_fabrication, echo=F}
+#join three rows using UNION ALL
+dbGetQuery(conn = conn_mysql, 
+           statement = "SELECT 'Small Fry' AS name, 0 AS low_limit, 74.99 AS high_limit 
+           UNION 
+           SELECT 'Average Joes' AS name, 75 AS low_limit, 149.99 AS high_limit
+           UNION 
+           SELECT 'Heavy Hitters' AS name, 150 AS low_limit, 9999999.99 AS high_limit")
+
+#categorize customers into one of these three categories. First query returns total amount of money spent by each customer. Second query creates table that determines categories. 
+#Last part indicates how to categorize values of tot_payments.
+dbGetQuery(conn = conn_mysql,
+           statement = "SELECT pymnt_grps.name, count(*) AS num_customers, 
+           sum(pymnt.num_rentals)/count(*) AS avg_num_cust_transactions, 
+           sum(pymnt.num_rentals) AS number_cat_rentals,
+           avg(pymnt.tot_payments) AS avg_cust_revenue
+           
+           FROM (SELECT customer_id,
+           count(*) AS num_rentals, sum(amount) AS tot_payments
+           FROM payment
+           GROUP BY customer_id) AS pymnt
+           INNER JOIN 
+           
+           (SELECT 'Small Fry' AS name, 0 AS low_limit, 74.99 AS high_limit 
+           UNION 
+           SELECT 'Average Joes' AS name, 75 AS low_limit, 149.99 AS high_limit
+           UNION 
+           SELECT 'Heavy Hitters' AS name, 150 AS low_limit, 9999999.99 AS high_limit) AS pymnt_grps
+           
+           ON pymnt.tot_payments BETWEEN pymnt_grps.low_limit AND pymnt_grps.high_limit
+           GROUP BY pymnt_grps.name")
+
+dbGetQuery(conn = conn_mysql, 
+           statement = "SELECT * FROM payment LIMIT 10")
+
+```
+
+### Task-oriented subqueries
+
+Subqueries can also be used to more efficiently compute queries. The first query below computes the total amount of money and the total number of rentals for each customer. 
+
+```{r task_oriented, echo=F}
+#
+dbGetQuery(conn = conn_mysql, 
+           statement = "SELECT c.first_name, c.last_name, ct.city,
+           sum(p.amount) tot_payments, count(*) tot_rentals
+           FROM payment p
+           INNER JOIN customer c
+           ON p.customer_id = c.customer_id
+           INNER JOIN address a
+           ON c.address_id = a.address_id
+           INNER JOIN city ct
+           ON a.city_id = ct.city_id
+           GROUP BY c.customer_id")
+```
+
+### Common table expressions (CTEs)
+
+CTEs offer a flexible way of handling results sets in that they can reference information defined above them in the same `with` clause. The following query finds the revenues generated
+by PG-rated films where a cast member had a last name that begins with 'S'. The first two queries rely inner joins and the third query uses CTEs. CTEs allow code to be more readable and
+are also more effective for recursive coding. 
+
+```{r common_table_expression, echo=F}
+#let's first aggregate at the actor level; 3897.64	
+dbListFields(conn = conn_mysql, name = 'rental')
+dbGetQuery(conn = conn_mysql, 
+           statement = "SELECT sum(revenue_actor) AS total_revenue FROM 
+           (SELECT a.first_name, a.last_name, sum(p.amount) AS revenue_actor
+           FROM actor AS a
+           
+           INNER JOIN film_actor AS fa
+           ON a.actor_id = fa.actor_id
+           INNER JOIN film AS f
+           ON fa.film_id = f.film_id
+           INNER JOIN inventory AS i
+           ON f.film_id = i.film_id
+           INNER JOIN rental AS r
+           ON i.inventory_id = r.inventory_id
+           INNER JOIN payment AS p
+           ON r.rental_id = p.rental_id
+           
+           WHERE a.last_name LIKE 'S%' AND
+           f.rating = 'PG'
+           GROUP BY a.actor_id
+           ORDER BY 3 DESC) AS actor_revenue
+           ")
+
+#let's not check if we get the same value when aggregating at the film level; $3897.64	
+dbGetQuery(conn = conn_mysql, 
+           statement= "SELECT sum(revenue_actor) AS total_revenue FROM 
+           (SELECT f.title, sum(p.amount) AS revenue_actor
+           FROM actor AS a
+           
+           INNER JOIN film_actor AS fa
+           ON a.actor_id = fa.actor_id
+           INNER JOIN film AS f
+           ON fa.film_id = f.film_id
+           INNER JOIN inventory AS i
+           ON f.film_id = i.film_id
+           INNER JOIN rental AS r
+           ON i.inventory_id = r.inventory_id
+           INNER JOIN payment AS p
+           ON r.rental_id = p.rental_id
+           
+           WHERE a.last_name LIKE 'S%' AND
+           f.rating = 'PG'
+           GROUP BY f.title
+           ORDER BY 2 DESC) as film_revenue
+           ")
+
+
+#let's now use a common table expression. First CTE obtains actor names where last name begins with S 
+#second CTE uses those name to find the films they appear in 
+#the third CTE uses the film titles to 
+dbGetQuery(conn = conn_mysql, 
+           statement = "WITH actors_s AS
+           (SELECT actor_id, first_name, last_name
+           FROM actor
+           WHERE last_name LIKE 'S%'),
+           
+               actors_s_pg AS
+               (SELECT s.actor_id, s.first_name, s.last_name,
+               f.film_id, f.title 
+               FROM actors_s AS s
+               INNER JOIN film_actor AS fa 
+               ON s.actor_id = fa.actor_id
+               INNER JOIN film AS f
+               ON f.film_id = fa.film_id
+               WHERE f.rating = 'PG'), 
+           
+               actors_s_pg_revenue AS
+               (SELECT spg.first_name, spg.last_name, p.amount
+               FROM actors_s_pg AS spg
+               INNER JOIN inventory i
+               ON i.film_id = spg.film_id
+               INNER JOIN rental r
+               ON i.inventory_id = r.inventory_id 
+               INNER JOIN payment p
+               ON r.rental_id = p.rental_id
+               ) 
+           SELECT spg_rev.first_name, spg_rev.last_name,
+           sum(spg_rev.amount) AS tot_revenue
+           FROM actors_s_pg_revenue spg_rev
+           GROUP BY spg_rev.first_name, spg_rev.last_name 
+           ORDER BY 3 desc")
+```
+
+
+### Subqueries as expression generators
+
+Subqueries can also be used where expressions are used (i.e., in `SELECT`, `ORDER`, `VALUES`, AND `INSERT` clauses). The code below computes the total amount of money spent by each 
+customer and the city each customer resides in by constructing three temporary tables: one for the first name, one for the last name, and one for the city. 
+
+```{r subqeury_expression1, echo=F}
+dbGetQuery(conn = conn_mysql,
+           statement = "SELECT 
+           (SELECT c.first_name FROM customer AS c
+           WHERE c.customer_id = p.customer_id) AS first_name, 
+           
+           (SELECT c.last_name FROM customer AS c
+           WHERE c.customer_id = p.customer_id) AS last_name, 
+           
+           (SELECT ct.city
+           FROM customer AS c
+           INNER JOIN address AS a
+           ON c.address_id = a.address_id 
+           INNER JOIN city AS ct
+           ON a.city_id = ct.city_id
+           WHERE c.customer_id = p.customer_id) AS city, 
+           
+           sum(p.amount) tot_payments,
+           count(*) tot_rentals
+           FROM payment AS p
+           GROUP BY p.customer_id")
+
+```
+
+The query below orders actors by the number of films they have appeared in.
+
+```{r subquery_expression2, echo=F}
+dbListFields(conn = conn_mysql, name = 'film_actor')
+dbGetQuery(conn = conn_mysql,
+           statement = "SELECT a.first_name, a.last_name, count(f.title) AS num_films
+           FROM actor AS a
+           INNER JOIN film_actor AS fa
+           ON a.actor_id = fa.actor_id
+           INNER JOIN film AS f 
+           ON fa.film_id = f.film_id
+           GROUP BY a.actor_id
+           ORDER BY num_films DESC")
+
+#use a subquery in ORDER BY; downside is that we cannot access number of films per actor
+dbGetQuery(conn = conn_mysql,
+           statement = "SELECT a.actor_id, a.first_name, a.last_name
+           FROM actor AS a
+           ORDER BY
+          (SELECT count(*) AS num_films
+          FROM film_actor fa WHERE fa.actor_id = a.actor_id) DESC")
+```
+
+```{r subquery_expression3, echoF}
+
+dbGetQuery(conn = conn_mysql,
+           statement = "INSERT INTO film_actor (actor_id, film_id, last_update)
+           VALUES (
+           (SELECT actor_id FROM actor
+           WHERE first_name = 'JENNIFER' AND last_name = 'DAVIS'),
+           (SELECT film_id FROM film
+           WHERE title = 'ACE GOLDFINGER'),
+           now()")
+```
+## Exercises
+
+```{r exercises_chapter9, echo=F}
+#1. Construct a query against the film table that uses a filter condition with a 
+#noncorrelated subquery against the category table to find all action films (category.name = 'Action').
+
+#find which tables contain category_id column 
+dbGetQuery(conn = conn_mysql, 
+           statement = "SELECT DISTINCT TABLE_NAME 
+    FROM INFORMATION_SCHEMA.COLUMNS
+    WHERE COLUMN_NAME = 'category_id'
+        AND TABLE_SCHEMA='sakila'")
+dbListFields(conn = conn_mysql, name = "category")
+
+##1a) Using inner joins
+dbGetQuery(conn = conn_mysql,
+           statement = "SELECT f.title, c.name
+           FROM film AS f 
+           INNER JOIN film_category AS fc
+           ON f.film_id = fc.film_id
+           INNER JOIN category AS c
+           ON fc.category_id = c.category_id
+           WHERE c.name = 'Action'")
+
+##1b) Using noncorrelated subquery 
+dbGetQuery(conn = conn_mysql,
+           statement = "SELECT f.title
+           FROM film AS f 
+           WHERE f.film_id IN 
+            (SELECT fc.film_id
+            FROM film_category AS fc 
+            INNER JOIN category AS c
+            ON fc.category_id = c.category_id 
+            WHERE c.name = 'Action')")
+
+#2. Rework the query from Exercise 9-1 using a correlated subquery against the category and film_category tables to achieve the same results. 
+
+dbGetQuery(conn = conn_mysql,
+           statement = "SELECT f.title
+           FROM film AS f 
+           WHERE EXISTS 
+            (SELECT 1
+            FROM film_category AS fc 
+            INNER JOIN category AS c
+            ON fc.category_id = c.category_id 
+            WHERE c.name = 'Action' AND
+            f.film_id = fc.film_id)")
+
+#3. Join the following query to a subquery against the film_actor table to show the level of each actor:
+#SELECT 'Hollywood Star' level, 30 min_roles, 99999 max_roles UNION ALL
+#SELECT 'Prolific Actor' level, 20 min_roles, 29 max_roles UNION ALL
+#SELECT 'Newcomer' level, 1 min_roles, 19 max_roles
+
+#The subquery against the film_actor table should count the number of rows for each actor using group by actor_id, and the count should be compared to the min_roles/max_roles columns to determine which level each actor belongs to.
+
+##determine the number of movies for each actor 
+dbListFields(conn = conn_mysql, name = 'actor')
+dbGetQuery(conn = conn_mysql, 
+           statement = "SELECT actor_group.level AS group, count(*) AS num_actors
+           FROM 
+           
+           (SELECT actor_id, count(*) AS num_starring_roles 
+           FROM film_actor
+           GROUP BY actor_id) AS actor_info
+           
+           INNER JOIN 
+           (SELECT 'Hollywood Star' AS level, 30 AS min_roles, 99999 AS max_roles 
+           UNION 
+           SELECT 'Prolific Actor' AS level, 20 AS min_roles, 29 AS max_roles 
+           UNION 
+           SELECT 'Newcomer' AS level, 1 AS min_roles, 19 AS max_roles) AS actor_group
+           
+           ON actor_info.num_starring_roles BETWEEN actor_group.min_roles AND actor_group.max_roles 
+           GROUP BY actor_group.level")
+
+
+dbGetQuery(conn = conn_mysql,
+           statement = "SELECT pymnt_grps.name, count(*) AS num_customers, 
+           sum(pymnt.num_rentals)/count(*) AS avg_num_cust_transactions, 
+           sum(pymnt.num_rentals) AS number_cat_rentals,
+           avg(pymnt.tot_payments) AS avg_cust_revenue
+           
+           FROM (SELECT customer_id,
+           count(*) AS num_rentals, sum(amount) AS tot_payments
+           FROM payment
+           GROUP BY customer_id) AS pymnt
+           INNER JOIN 
+           
+           (SELECT 'Small Fry' AS name, 0 AS low_limit, 74.99 AS high_limit 
+           UNION 
+           SELECT 'Average Joes' AS name, 75 AS low_limit, 149.99 AS high_limit
+           UNION 
+           SELECT 'Heavy Hitters' AS name, 150 AS low_limit, 9999999.99 AS high_limit) AS pymnt_grps
+           
+           ON pymnt.tot_payments BETWEEN pymnt_grps.low_limit AND pymnt_grps.high_limit
+           GROUP BY pymnt_grps.name")
+
+dbGetQuery(conn = conn_mysql,
+           statement = "SELECT actr.actor_id, grps.level FROM
+           (SELECT actor_id, count(*) num_roles FROM film_actor
+           GROUP BY actor_id
+           ) AS actr
+           INNER JOIN
+           (SELECT 'Hollywood Star' level, 30 AS min_roles, 99999 AS max_roles UNION ALL
+           SELECT 'Prolific Actor' level, 20 AS min_roles, 29 AS max_roles UNION ALL
+           SELECT 'Newcomer' level, 1 AS min_roles, 19 AS max_roles ) AS grps
+           ON actr.num_roles BETWEEN grps.min_roles AND grps.max_roles")
+
+```
+
+# Chapter 10: Joins revisited 
+
+```{r inner_join_limit, echo=F}
+#inner joins only return data for observations that exist in the joined data sets. For example, notice that 42 movies do not have any inventory information. 
+dbListFields(conn = conn_mysql, name = 'inventory')
+dbGetQuery(conn = conn_mysql, statement = "SELECT f.film_id, f.title, count(*) AS num_copies 
+           FROM film AS f
+           INNER JOIN inventory AS i
+           ON f.film_id = i.film_id
+           GROUP BY f.film_id, f.title")
+
+#to return the number of copies for all movies, use the outer join. In this query, all the rows of the film data set are returned. Note that the calculation for num_copies
+#has also been changed so that it is calculated by summing the number of times each inventory_id appears for each movie. If num_copies would be left as count(*), then null values would
+#appear as 1 because they all appear in the film data set.
+dbGetQuery(conn = conn_mysql, statement = "SELECT f.film_id, f.title,count(i.inventory_id) AS num_copies 
+           FROM film AS f
+           LEFT OUTER JOIN inventory AS i
+           ON f.film_id = i.film_id
+           GROUP BY f.film_id, f.title")
+
+#the following two queries provide under-the-hood look for why num_copies returns as 0
+dbGetQuery(conn = conn_mysql, statement = "SELECT f.film_id, f.title, i.inventory_id 
+           FROM film AS f
+           INNER JOIN inventory AS i
+           ON f.film_id = i.film_id
+           HAVING film_id 
+           BETWEEN 13 AND 15")
+
+dbGetQuery(conn = conn_mysql, statement = "SELECT f.film_id, f.title, i.inventory_id 
+           FROM film AS f
+           LEFT OUTER JOIN inventory AS i
+           ON f.film_id = i.film_id
+           HAVING film_id 
+           BETWEEN 13 AND 15")
+
+```
+
+### Three-way outer joins
+
+```{r three_outer_join, echo=T}
+#the query below joins three data sets, with the rental data of each movie rental being extracted
+dbListFields(conn = conn_mysql, name = 'rental')
+dbGetQuery(conn = conn_mysql, statement = "SELECT COUNT(*) FROM film")
+dbGetQuery(conn = conn_mysql, statement = "SELECT f.film_id, f.title, i.inventory_id, r.rental_date
+           FROM film AS f
+           LEFT OUTER JOIN inventory AS i
+           ON f.film_id = i.film_id
+           LEFT OUTER JOIN rental AS r
+           ON i.inventory_id = r.inventory_id
+           WHERE f.film_id BETWEEN 13 AND 15")
+```
+
+## Cross joins 
+
+Cross joins return all possible combinations of the selected variables. 
+
+```{r cross_join, echo=F}
+dbGetQuery(conn = conn_mysql, statement = "SELECT c.name AS category_name, l.name AS language
+           FROM category AS c
+           CROSS JOIN language l")
+```
+
+Cross joins can be used to efficiently create tables with categories not directly calculated from the data. The query below implements a cross join to create a table where the number of
+rentals on each day of 2020 is returned. The `DATE_ADD()` function is used to convert the numbers to day in the year 2020. 
+
+```{r cross_join_ex, echo=F}
+dbListFields(conn = conn_mysql, name = 'rental')
+dbGetQuery(conn = conn_mysql, statement = "SELECT date(rental_date) FROM rental LIMIT 5")
+dbGetQuery(conn = conn_mysql, statement = "SELECT days.date, COUNT(r.rental_id) AS num_rentals
+           FROM rental AS r
+           RIGHT OUTER JOIN
+           (SELECT DATE_ADD('2005-01-01', INTERVAL(ones.num + tens.num + hundreds.num) day) AS date
+           FROM
+           (SELECT 0 num UNION ALL
+           SELECT 1 num UNION ALL
+           SELECT 2 num UNION ALL
+           SELECT 3 num UNION ALL
+           SELECT 4 num UNION ALL
+           SELECT 5 num UNION ALL
+           SELECT 6 num UNION ALL
+           SELECT 7 num UNION ALL
+           SELECT 8 num UNION ALL
+           SELECT 9 num) ones
+           CROSS JOIN
+           (SELECT 0 num UNION ALL
+           SELECT 10 num UNION ALL
+           SELECT 20 num UNION ALL
+           SELECT 30 num UNION ALL
+           SELECT 40 num UNION ALL
+           SELECT 50 num UNION ALL
+           SELECT 60 num UNION ALL
+           SELECT 70 num UNION ALL
+           SELECT 80 num UNION ALL
+           SELECT 90 num) tens
+           CROSS JOIN
+           (SELECT 0 num UNION ALL
+           SELECT 100 num UNION ALL
+           SELECT 200 num UNION ALL
+           SELECT 300 num) hundreds
+           HAVING date < '2006-01-01'
+           ORDER BY date) AS days
+           ON days.date = date(r.rental_date)
+           GROUP BY days.date")
+```
+
+```{r chapter_10_exercises, echo=F}
+#calculate the total amount of money spent by each customer 
+dbListFields(conn = conn_mysql,name = 'payment')
+dbGetQuery(conn = conn_mysql, statement = "SELECT c.customer_id, c.first_name, c.last_name, SUM(p.amount) AS total_spent
+FROM customer AS c
+LEFT OUTER JOIN payment AS p
+ON c.customer_id = p.customer_id
+GROUP BY c.customer_id")
+
+#same query using right outer join 
+dbGetQuery(conn = conn_mysql, statement = "SELECT c.customer_id, c.first_name, c.last_name, SUM(amount) AS total_spent
+FROM customer AS c
+RIGHT OUTER JOIN payment AS p
+ON c.customer_id = .customer_id
+GROUP BY c.customer_id")
+
+#generate set that shows the number of customers in each spending bracket of 0-50, 50-100, 100-200, 200+
+dbGetQuery(conn = conn_mysql,
+           statement = "SELECT pymnt_grps.name, count(*) AS num_customers, 
+           sum(pymnt.num_rentals)/count(*) AS avg_num_cust_transactions, 
+           sum(pymnt.num_rentals) AS number_cat_rentals,
+           avg(pymnt.tot_payments) AS avg_cust_revenue
+           
+           FROM (SELECT customer_id,
+           count(*) AS num_rentals, sum(amount) AS tot_payments
+           FROM payment
+           GROUP BY customer_id) AS pymnt
+           INNER JOIN 
+           
+           (SELECT 'Small Fry' AS name, 0 AS low_limit, 74.99 AS high_limit 
+           UNION 
+           SELECT 'Average Joes' AS name, 75 AS low_limit, 149.99 AS high_limit
+           UNION 
+           SELECT 'Heavy Hitters' AS name, 150 AS low_limit, 9999999.99 AS high_limit) AS pymnt_grps
+           
+           ON pymnt.tot_payments BETWEEN pymnt_grps.low_limit AND pymnt_grps.high_limit
+           GROUP BY pymnt_grps.name")
+
+```
+
+
+# Chapter 11: Conditional logic
+
+```{r searched_case_expression, echo=F}
+#returns 'active' when active = 1
+dbListFields(conn = conn_mysql, name = 'customer')
+dbGetQuery(conn = conn_mysql, statement = "SELECT first_name, last_name,
+           CASE 
+            WHEN active = 1 THEN 'ACTIVE'   
+            ELSE 'INACTIVE'
+           END activity_type
+           FROM customer")
+
+#query returns the number of rentals for inactive customers using; note that you cannot exclude the active column 
+dbGetQuery(conn = conn_mysql, statement = "SELECT first_name, last_name, num_rentals 
+           FROM 
+           (SELECT c.first_name, c.last_name, COUNT(*) AS num_rentals, c.active
+           FROM customer AS c
+           LEFT JOIN payment AS p
+           ON c.customer_id = p.customer_id
+           GROUP BY c.customer_id
+           HAVING c.active = 0) AS num_rentals")
+
+##we can use a case expression to return the number of rentals per customer for inactive customers
+dbGetQuery(conn = conn_mysql, statement = "SELECT c.first_name, c.last_name, 
+           CASE 
+            WHEN active = 1 THEN 0
+            ELSE
+             (SELECT count(*) FROM rental AS r 
+             WHERE r.customer_id = c.customer_id)
+           END num_rentals
+           FROM customer AS c
+           HAVING num_rentals > 0")
+
+```
+
+
+## Examples of case expressions 
+### Result set transformation
+
+The query below return the number of rentals in each month (from May to July). Note that `monthname()` extracts only the month from the date.  
+
+```{r example_case, echo=F}
+dbGetQuery(conn = conn_mysql, "SELECT monthname(rental_date) AS rental_month, COUNT(*) AS num_rentals
+           FROM rental 
+           WHERE rental_date BETWEEN '2005-05-01' AND '2005-08-01'
+           GROUp BY rental_month")
+
+```
+
+We can then use simple case expressions to convert this data from long to wide format.
+
+```{r example_case_transform, echo=F}
+dbGetQuery(conn = conn_mysql, statement = "SELECT 
+           SUM(CASE WHEN monthname(rental_date) = 'May' THEN 1 ELSE 0 END) AS may_rentals,
+           SUM(CASE WHEN monthname(rental_date) = 'June' THEN 1 ELSE 0 END) AS june_rentals,
+           SUM(CASE WHEN monthname(rental_date) = 'July' THEN 1 ELSE 0 END) AS july_rentals
+           FROM rental
+           WHERE rental_date BETWEEN '2005-05-01' AND '2005-08-01'")
+```
+
+Case expressions can also be used to determine whether certain relations exist. The query below determines whether each actor has appeared in a movies with ratings of G, PG, and NC-17. The second query determines the availability of each film according to a categorization nomenclature.
+
+```{r example_case_exist, echo=F}
+dbGetQuery(conn = conn_mysql, statement = "SELECT a.first_name, a.last_name, 
+                  CASE WHEN EXISTS (SELECT 1 FROM film_actor AS fa 
+                  INNER JOIN film AS f
+                  ON fa.film_id = f.film_id
+                  WHERE fa.actor_id = a.actor_id AND 
+                  f.rating = 'G') THEN 'Y' 
+                  ELSE 'N'
+                  END g_actor, 
+                  
+                  CASE WHEN EXISTS (SELECT 1 FROM film_actor AS fa
+                  INNER JOIN film AS f 
+                  ON fa.film_id = f.film_id
+                  WHERE fa.actor_id = a.actor_id AND
+                  f.rating = 'PG') THEN 'Y' ELSE 'N'
+                  END pg_actor, 
+                  
+                  CASE WHEN EXISTS (SELECT 1 FROM film_actor AS fa
+                  INNER JOIN film AS f 
+                  ON fa.film_id = f.film_id
+                  WHERE fa.actor_id = a.actor_id AND
+                  f.rating = 'NC-17') THEN 'Y' ELSE 'N'
+                  END nc_actor
+                  
+                  FROM actor AS a
+                  WHERE a.last_name LIKE 'S%' OR a.first_name LIKE 'S%'
+           ")
+
+dbGetQuery(conn = conn_mysql, statement = "SELECT f.title, 
+                  CASE  (SELECT count(*) FROM inventory AS i
+                  WHERE i.film_id = f.film_id)
+                  WHEN 0 THEN 'OUT OF STOCK'
+                  WHEN 1 THEN 'SCARCE'
+                  WHEN 2 THEN 'SCARCE'
+                  WHEN 3 THEN 'AVAILABLE'
+                  WHEN 4 THEN 'AVAILABLE'
+                  ELSE 'COMMON' END film_availability
+                  
+                  FROM film AS f")
+```
+
+### Division-by-zero errors
+
+Division by zero leads cells to be filled with `NULL` values. The query below calculates the average amount spent in each rental for each customer. Note that internal referencing cannot
+be performed within qury. 
+
+```{r division_zero_solution, echo=F}
+dbListFields(conn = conn_mysql, name = 'payment')
+dbGetQuery(conn = conn_mysql, statement = "SELECT c.customer_id, c.first_name, c.last_name, 
+                  sum(p.amount) AS tot_payment,
+                  count(p.amount) AS num_payments,
+                  sum(p.amount) / 
+                  CASE WHEN count(p.amount) = 0 THEN 1 ELSE count(p.amount)
+                  END avg_payment
+                  FROM customer AS c 
+                  LEFT OUTER JOIN payment AS p 
+                  ON c.customer_id = p.customer_id
+                  GROUP BY c.customer_id")
+
+```
+
+### Conditional updates
+
+The following query determines if customers are active by checking if they have rented a movie in the last 90 days.
+
+```{r conditional_update, echo=F}
+dbGetQuery(conn = conn_mysql, statement = "UPDATE customer AS c
+           SET active = CASE 
+           WHEN 90 <= (SELECT (datediff(now(), max(rental_date)))
+           FROM rental AS r 
+           WHERE r.customer_id = c.customer_id) THEN 0 ELSE 1 
+           END 
+           WHERE active = 1
+           ")
+```
+
+## Exercises
+
+```{r chapter-11-exercises, echo=F}
+#assign encoding pattern to each actor
+dbGetQuery(conn = conn_mysql, statement = "SELECT name, CASE name 
+           WHEN  name in ('English', 'Italian', 'French', 'German') THEN 'latin1'
+           WHEN name in ('Japanese', 'Mandarin') THEN 'utf8'
+           ELSE 'unknown' 
+           END 
+           FROM language")
+
+#convert the following query to wide format
+dbGetQuery(conn = conn_mysql, statement = "SELECT 
+           SUM(CASE WHEN rating = 'G' THEN 1 ELSE 0 END) AS num_g,
+           SUM(CASE WHEN rating = 'PG' THEN 1 ELSE 0 END) AS num_pg,
+           SUM(CASE WHEN rating = 'PG-13' THEN 1 ELSE 0 END) AS num_pg_13,
+           SUM(CASE WHEN rating = 'R' THEN 1 ELSE 0 END) AS num_r,
+           SUM(CASE WHEN rating = 'NC-17' THEN 1 ELSE 0 END) AS num_nc_17
+           FROM film")
+```
+
+# Chapter 12: Transactions
+
+### Locking 
+
+When using database systems, data can be read and modified. Although allowing many people to read data from a database is harmless, allowing many people to modify data at any given time
+point can cause many issues because data readers will not know what version of data they are downloading. One wayto navigate this issue is to only permit data reading after data
+modifications have been completed. Another way is to version data and only give licenses to modify data. 
+
+### Lock granularities
+
+Components ranging from tables, pages, and rows can be locked in a database. Note that convenience rises as smaller components are locked, but bookeeping demands increase. Do note that
+Oracle Database only used row locking
+
+## What is a transaction?
+
+Transactions are devices from grouping together multiple SQL statements such that either all or none of the statements are processed. This all-or-none procedure is important for functions that cannot risk being half computed (e.g., withdrawing 500$ from savings but it never gets deposited into checkings account). In SQL parlance, if any process goes awry, then
+the program issues a `rollback` to undo all the changes; if all processes are successfully computed, the program issues a `commit`. Transactions are crucial to maintaining the fidelity 
+a database when mutiple people are using it. The transaction below only updates the `avail_balance` value for a specific customer if only one cell was updated. 
+
+```{sql, echo=F}
+    START TRANSACTION;
+     /* withdraw money from first account, making sure balance is sufficient */
+    UPDATE account SET avail_balance = avail_balance - 500
+    WHERE account_id = 9988
+      AND avail_balance > 500;
+    IF <exactly one row was updated by the previous statement> THEN
+    /* deposit money into second account */
+      UPDATE account SET avail_balance = avail_balance + 500
+        WHERE account_id = 9989;
+      IF <exactly one row was updated by the previous statement> THEN
+        /* everything worked, make the changes permanent */
+        COMMIT;
+      ELSE
+        /* something went wrong, undo all changes in this transaction */
+        ROLLBACK;
+END IF; 
+ELSE
+      /* insufficient funds, or error encountered during update */
+      ROLLBACK;
+    END IF;
+   
+```
+
+### Starting a transaction
+
+In RDBMSs, transactions are either committed automatically computed (as in Oracle) or must be explicitly started (MySQL, Microsoft SQL). One downside of having to explicitly indicate
+transactions is that they cannot be reversed because the server is in `autocommit` model. To enable an Oracle-like functionality with respect to transactions, autocommit mode can be 
+disabled by `SET AUTOCOMMIT=0` in MySQL. When autocommit mode is disabled, all SQL commands must take place in a transaction or be explicitly committed. To prevent having to reconstruct
+data that you accidentally deleted, it is best to turn off autocommit mode and run all SQL statements within a transaction. 
+
+```{r autocommit_off, echo=F}
+
+dbGetQuery(conn = conn_mysql, statement = "SET AUTOCOMMIT=0")
+dbGetQuery(conn = conn_mysql, statement = "USE sakila")
+
+dbGetQuery(conn = conn_mysql, statement = "SELECT * FROM customer LIMIT 10")
+```
+
+### Ending a transaction
+
+Transactions must be ended by using a commit (instructs server to mark changes as permanent). To avoid 
+
+## Exercises 
+
+```{sql chapter_12_exercises, echo=F}
+
+ START TRANSACTION;
+     /* withdraw money from first account, making sure balance is sufficient */
+    UPDATE Account SET avail_balance = avail_balance - 50
+    WHERE account_id = 123
+      AND avail_balance > 50;
+    IF <exactly one row was updated by the previous statement> THEN
+    /* deposit money into second account */
+      UPDATE account SET avail_balance = avail_balance + 500
+        WHERE account_id = 9989;
+      IF <exactly one row was updated by the previous statement> THEN
+        /* everything worked, make the changes permanent */
+        COMMIT;
+      ELSE
+        /* something went wrong, undo all changes in this transaction */
+        ROLLBACK;
+END IF; 
+ELSE
+      /* insufficient funds, or error encountered during update */
+      ROLLBACK;
+    END IF;
+
+```
+
+# Chapter 13: Indexes and constraints 
+
+## Indexes 
+
+Indexes are crucial for expediting SQL commands. For example, searching for names that begin with 'R' would take an overwhelming amount of time in a data set with 3 million rows. To 
+expeite the searchtime, indexes can be used. Like an index in a book, an index allows an SQL command to only search a subset of rows (instead of every row). 
+
+### Index creation
+
+Indices can easily be created by nesting the `ADD INDEX` statement in an `ALTER TABLE` command. Having created a table for an index, the query optimizer can now determine whether queries
+would benefit from using the index in searches. We can see that the `customer` table has indices for the `store_id`, `address_id`, and `last_name` columns. Note that, when creating 
+tables, an index is automatically generated for the primary key column. 
+
+```{sql index_creation, echo=F}
+ALTER TABLE customer 
+ADD INDEX idx_email (email); 
+```
+
+```{r view_index, echo=F}
+dbListFields(conn = conn_mysql, name = 'customer')
+dbGetQuery(conn = conn_mysql, statement = "SHOW INDEX FROM customer")
+```
+
+### Unique index
+
+Some columns in datasets can be permitted to have identical values (e.g., first & last names), but other columns must have unique values (e.g., primary key, email). An index can be
+designed to have unique values by simply adding the `UNIQUE` keyword in the index creation statements. 
+
+```{r unique_index_creation, echo=F}
+dbGetQuery(conn = conn_mysql, statement = "ALTER TABLE customer 
+           ADD UNIQUE idx_email (email)")
+
+#returns errors; Duplicate entry 'ALAN.KAHN@sakilacustomer.org' for key
+dbGetQuery(conn = conn_mysql, statement = "INSERT INTO customer
+          (store_id, first_name, last_name, email, address_id, active)
+         VALUES
+          (1,'ALAN','KAHN', 'ALAN.KAHN@sakilacustomer.org', 394, 1);
+    ERROR 1062 (23000): Duplicate entry 'ALAN.KAHN@sakilacustomer.org'
+      for key 'idx_email'")
+```
+
+### Multicolumn indexes
+
+Multicolumn indexes can also be created. If you know queries will search for rows based on first and last names, the table can be equipped with an index comprised of the first and last name. Note that the order is important. If, for example, the rows are organized by last name, then `last_name` should preceed `first_name` in the index. 
+
+```{sql multicolumn_index, echo=F}
+ALTER TABLE customer
+ADD INDEX idx_full_name (last_name, first_name);
+```
+
+### Types of indexes
+#### B tree
+
+B-tree index types are most common and constitute the default index type across all major database systems (Oracle, Microsoft SQL, MySQL). B-tree indices divide column values into 
+alphabetical (or numerical) sets and then further subdivide these sets. Instead of searching through all values in a column, only the values in a leaf node are searched. Importantly, 
+b-tree indices can withstand heavy modification by redistributing values across the branch and leaf nodes.
+
+#### Bitmap indices
+
+Indices are used for low-cardinality data. 
+
+#### Text indices
+
+Indexes are used for searching text content. 
+
+### How indexes are used
+
+Use the `EXPLAIN` keyword to see how SQL goes about using indexes. The execution path shown below indicates that the query used the `idx_last_name` key before the `full_name` key
+was added, but that the `full_name` key was used after it was added. 
+
+```{r index_checkup, echo=F}
+dbGetQuery(conn = conn_mysql, statement = "EXPLAIN
+SELECT customer_id, first_name, last_name
+FROM customer
+WHERE first_name LIKE 'S%' AND last_name LIKE 'P%'")
+
+dbGetQuery(conn = conn_mysql, statement = "ALTER TABLE customer
+ADD INDEX idx_full_name (last_name, first_name)")
+```
+
+### The downsides of indexes
+
+Indexes can dramatically slow down the rate at which tables are modified because, with each modification, each key must be changed. Therefore, only add keys to tables when there is good
+reason to do so. Otherwise, add and delete keys when they are only needed for temporary purposes. Two other rules to follow when using indexes are listed below:
+
+1) Build indexes on all columns referenced by foreign keys. 
+2) Index columns frequently used to retrieve data.
+
+## Constraints
+
+Three types of constraints:
+
+1) Primary key constraints
+2) Foreign key constraints: restrict one or more columns in a table to contain only values in another table's primary key columns (for example, changing a customer's ID should results
+in changes to this ID value in all other tables)
+3) Unique constraints restrict columns to have unique values. 
+4) Check constraints restrict range of permissible values. 
+
+### Constraint creation 
+
+The SQL commands below place a foreign key on the `address_id` column of the `customer` table such that its values must be contained within the`address_id` column values of the `address`
+table (parent table). Note that the InnoDb engine must be used to create foreign key constraints. The `on` clauses specify that deletions to `address_id` and `store_id` column values in the parent tables (`address` and `store`, respectively) will be blocked (`ON DELETE RESTRICT`) but that updates will be carried over (`ON UPDATE CASCADE`). 
+
+```{sql constraint_creation, echo=F}
+CREATE TABLE customer (
+      customer_id SMALLINT UNSIGNED NOT NULL AUTO_INCREMENT,
+      store_id TINYINT UNSIGNED NOT NULL,
+      first_name VARCHAR(45) NOT NULL,
+      last_name VARCHAR(45) NOT NULL,
+      email VARCHAR(50) DEFAULT NULL,
+      address_id SMALLINT UNSIGNED NOT NULL,
+      active BOOLEAN NOT NULL DEFAULT TRUE,
+      create_date DATETIME NOT NULL,
+      last_update TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+      
+      PRIMARY KEY (customer_id),
+      KEY idx_fk_store_id (store_id),
+      KEY idx_fk_address_id (address_id),
+      KEY idx_last_name (last_name),
+      CONSTRAINT fk_customer_address FOREIGN KEY (address_id)
+      REFERENCES address (address_id) ON DELETE RESTRICT ON UPDATE CASCADE, 
+      CONSTRAINT fk_customer_store FOREIGN KEY (store_id)
+      REFERENCES store (store_id) ON DELETE RESTRICT ON UPDATE CASCADE)
+ENGINE=InnoDB DEFAULT CHARSET=utf8;
+```
+
+The queries below provide two examples where deletions of `address_id` values in either the parent table (`customer`) or the child table (`address`) are blocked.
+
+```{r view_foreign_keys, echo=F}
+#we can see that the keys of the customer match how it was created above
+dbGetQuery(conn = conn_mysql, statement = "SELECT constraint_name, table_name, constraint_type
+        FROM information_schema.table_constraints
+        WHERE table_schema = 'sakila' AND table_name = 'customer'
+        ORDER BY 3,1")
+```
+Note that rows can be deleted from the child table (`customer` in this case) but not from the parent table (`address`). 
+
+```{r blocked_deletions, echo=F}
+dbListFields(conn = conn_mysql, name = 'customer')
+dbGetQuery(conn = conn_mysql, statement = "USE sakila")
+
+dbGetQuery(conn = conn_mysql, statement = "SELECT c.first_name, c.last_name, c.address_id, a.address
+FROM customer c
+INNER JOIN address a
+ON c.address_id = a.address_id
+WHERE c.address_id = 123")
+
+#blocked deletion from parent table 
+dbGetQuery(conn = conn_mysql, statement = "DELETE FROM address WHERE address_id = 123")
+
+#permitted deletion from child 
+dbGetQuery(conn = conn_mysql, statement = "DELETE FROM customer WHERE address_id = 123")
+```
+```{r permitted_updates, echo=F}
+dbGetQuery(conn = conn_mysql, statement = "UPDATE address
+           SET address_id = 9999 
+           WHERE address_id = 123")
+```
+
+```{r chapter_13_exercises, echo=F}
+#Generate an alter table statement for the rental table so that an error will be raised if a row having a value 
+#found in the rental.customer_id column is deleted from the customer (parent) table.
+dbGetQuery(conn = conn_mysql, statement = "ALTER TABLE rental
+    ADD CONSTRAINT fk_customer_address FOREIGN KEY (customer_id)
+    REFERENCES customer (customer_id) ON DELETE RESTRICT")
+
+dbGetQuery(conn = conn_mysql, statement = "CREATE INDEX idx_payment01 
+           ON payment (payment_date, amount)")
+
+```
+
+# Chapter 14: Views
+
+Views are indispensable for helping end users effectively interact with data. Views represent customized tables and, importantly, do not take up any memory in the hard disk because
+they are simply reserved pieces of code. For example, the following query creates a view of the customer table with the email addresses anonymized. This anonymized view can be used
+by all non-marketing personnel who do not need email information, keeping data security high. 
+
+```{r view_example, echo=F}
+
+dbGetQuery(conn = conn_mysql, statement = "CREATE VIEW customer_vw (
+           customer_id, 
+           first_name, 
+           last_name, 
+           email)
+           AS SELECT  customer_id, first_name, last_name, 
+           concat(substr(email,1,2), '*****', substr(email, -4)) email
+           FROM customer")
+
+#query view (this runs the code thatc reates the view and the commands that qierythe view)
+dbGetQuery(conn = conn_mysql, statement = "SELECT first_name, last_name, email
+           FROM customer_vw")
+
+#use DESCRIBE to view the columns in a view (or dbListFields)
+dbListFields(conn = conn_mysql, name = 'customer_vw')
+dbGetQuery(conn = conn_mysql, statement = "DESCRIBE customer_vw")
+```
+
+Views can be used similarly to any other table. Select clauses can be applied to views and views can be joined to other tables. 
+
+## Why use views?
+
+### Data security
+
+### Data aggregation
+
+Views can be created so that end users can easily access pre-aggregated tables. If, at some future point, it would be more effective to put the view in a table, this can easily be accomplished. 
+
+### Hiding complexity 
+
+Some tasks require the linking of several tables (a very difficult and time-consuming task for end users). Complicated tables can be stored in views. For example, the following view 
+stores the following information about each film: the film category, the number of actors appearing in the film, the total number of copies in inventory, and the number of rentals for
+each film. 
+
+```{r view_example_hiding_complexity, echo=F}
+dbGetQuery(conn = conn_mysql, statement = " 
+           CREATE VIEW film_report (
+           AS 
+            SELECT f.film_id, f.title, f.description, f.rating,
+               #get film category for each film 
+               (SELECT c.name 
+               FROM category AS c 
+                  INNER JOIN film_category AS fc
+                  ON c.category_id = fc.category_id
+               WHERE fc.film_id = f.film_id) AS category_name
+            
+            FROM film AS f")
+```
+
+Note that five variables are generated using subqueries and so, if these variables are not selected from the view, then the scalar subqueries will not be computed. 
+
+### Joining partitioned data
+
+## Updatable views
+
+Views in MySQL and Oracle can be modified, but must follow the following rules:
+
+1) No aggregate functions (max, min, avg).
+2) The view does not contain `group by` or `having` clauses.
+3) The view does not use `UNION`, `UNION ALL`, or `DISTINCT`.
+4) The `from` clause includes at least one table or updatable view. 
+5) The `from` clause uses only inner joins if there is more than one table or view. 
+6) No subqueries exist in the select or from clause, and any subqueries in the where clause do not refer to tables in the from clause.
+
+\noindent
+Essentially, a view table can only be editable if it keeps the data at the lowest level. 
+
+### Updating simple views
+
+The query below updates a row in the `customer_vw` table. Note howthe update in the `customer_vw` view carries over into the customer table. Note that data cannot be inserted into views.
+
+```{r update_simple_view, echo=F}
+dbGetQuery(conn = conn_mysql, statement = "UPDATE customer_vw
+           SET last_name = 'Smith-Allen' 
+           WHERE customer_id = 1")
+
+dbGetQuery(conn = conn_mysql, statement = "SELECT last_name FROM customer WHERE customer_id = 1")
+```
+
+### Updating complex views
+
+```{r update_complex_view, echo=F}
+dbGetQuery(conn = conn_mysql, statement = "CREATE VIEW customer_details
+    AS
+    SELECT c.customer_id,
+      c.store_id,
+      c.first_name,
+      c.last_name,
+      c.address_id,
+      c.active,
+      c.create_date,
+      a.address,
+      ct.city,
+      cn.country,
+      a.postal_code
+    FROM customer c
+      INNER JOIN address a
+      ON c.address_id = a.address_id
+      INNER JOIN city ct
+      ON a.city_id = ct.city_id
+    INNER JOIN country cn
+      ON ct.country_id = cn.country_id;")
+
+#data can only be updated and inserted in tables individually
+dbGetQuery(conn = conn_mysql,statement = "SELECT * FROM customer_details LIMIT 10")
+```
+
+```{r echo=F, chapter_14_exercises}
+#1) Create view that contains each film that every actor appears in (film_title, category_name, first_name, last_name)
+#tables to use: actor --> film_actor --> film --> film_categoru 
+dbListFields(conn = conn_mysql, name = 'actor')
+dbGetQuery(conn = conn_mysql, statement = "SELECT title, category_name, first_name, last_name FROM actor_vw
+WHERE last_name = 'FAWCETT'")
+
+dbGetQuery(conn = conn_mysql, statement = "CREATE VIEW actor_vw 
+                  AS
+           SELECT f.title, a.first_name, a.last_name, c.name AS category_name
+           FROM actor AS a
+            INNER JOIN film_actor AS fa
+            ON a.actor_id = fa.actor_id
+            INNER JOIN film AS f 
+            ON fa.film_id = f.film_id
+            INNER JOIN film_category AS fc
+            ON f.film_id = fc.film_id
+            INNER JOIN category AS c
+            ON fc.category_id = c.category_id
+           ")
+
+#2. The film rental company manager would like to have a report that includes the name of every country, along with the total payments for all customers who live in each country. Generate a view definition that queries the country table and uses a scalar subquery to calculate a value for a column named tot_payments.
+#city --> address --> customer --> payment 
+
+dbGetQuery(conn = conn_mysql, statement = "CREATE VIEW country_revenue_vw
+           AS
+           SELECT c.country, 
+           (SELECT sum(p.amount) AS country_revenue
+           FROM city AS ci 
+               INNER JOIN address AS a 
+               ON ci.city_id = a.city_id
+               INNER JOIN customer AS cu
+               ON a.address_id = cu.address_id
+               INNER JOIN payment as p
+               ON cu.customer_id = p.customer_id
+           WHERE ci.country_id = c.country_id) AS tot_payments
+           FROM country AS c")
+
+#use 
+dbGetQuery(conn = conn_mysql, statement = "
+SELECT c.country, 
+(SELECT sum(p.amount) AS country_revenue
+           FROM city AS ci 
+               INNER JOIN address AS a 
+               ON ci.city_id = a.city_id
+               INNER JOIN customer AS cu
+               ON a.address_id = cu.address_id
+               INNER JOIN payment as p
+               ON cu.customer_id = p.customer_id
+           GROUP BY ci.country_id) 
+FROM country AS c")
+```
+
+# Chapter 15: Metadata
+
+## information_schema
+
+Metadata is also called data dictionary or the system catalog. All the tables in `information_schema` are contained in views. The following query retrieves all of the tables in the 
+`sakila` database. 
+
+```{r metadata_example, echo=F}
+dbGetQuery(conn = conn_mysql, statement = "SELECT table_name, table_type
+           FROM information_schema.tables
+           WHERE table_schema = 'sakila' AND table_type = 'BASE TABLE'")
+
+#return only views in sakila database
+dbGetQuery(conn = conn_mysql, statement = "SELECT table_name, is_updatable
+           FROM information_schema.views
+           WHERE table_schema = 'sakila'")
+```
+
+Query below retrieves information about columns in the `film` table using the `columns` view. 
+
+```{r metadata_columns, echo=F}
+dbGetQuery(conn = conn_mysql, statement = "SELECT table_schema, table_name, column_name, data_type
+           FROM information_schema.columns
+           WHERE table_schema = 'sakila' AND table_name = 'film' ")
+```
+
+Information about the indexes is found within the `statistics` view and information about constraints is contained in the `table_constraints` view.
+
+```{r index_view, echoF}
+dbGetQuery(conn = conn_mysql, statement = "SELECT *
+           FROM information_schema.statistics
+           WHERE table_schema = 'sakila'")
+dbGetQuery(conn = conn_mysql, statement = "SELECT *
+           FROM information_schema.table_constraints
+           WHERE table_schema = 'sakila'")
+
+
+dbGetQuery(conn = conn_mysql, statement = "SELECT *
+           FROM information_schema.plugins")
+```
+
+### Deployment verification
+
+The query below checks that tables and views have the proper design characteristics (e.g., number of foreign keys, primary keys).
+
+```{r deployment_verification, echo=F}
+dbGetQuery(conn = conn_mysql, statement = "SELECT table_name,
+                  (SELECT count(*) FROM information_schema.columns AS clm                 
+                  WHERE clm.table_schema = tbl.table_schema                
+                  AND clm.table_name = tbl.table_name) AS num_columns, 
+                  
+                  (SELECT  count(*) FROM information_schema.statistics AS sta
+                  WHERE sta.table_schema = tbl.table_schema 
+                  AND sta.table_name = tbl.table_name) AS num_indexes, 
+                  
+                  (SELECT count(*) FROM information_schema.table_constraints AS tc 
+                  WHERE tc.table_schema = tbl.table_schema 
+                  AND tc.table_name = tbl.table_name 
+                  AND tc.constraint_type = 'PRIMARY KEY') AS num_primary_keys, 
+                  
+                  (SELECT count(*) FROM information_schema.table_constraints AS tc 
+                  WHERE tc.table_schema = tbl.table_schema 
+                  AND tc.table_name = tbl.table_name 
+                  AND tc.constraint_type = 'FOREIGN KEY') AS num_foreign_keys
+                  
+               FROM information_schema.tables AS tbl
+            WHERE tbl.table_schema = 'sakila' AND tbl.table_type = 'BASE TABLE'")
+
+```
+
+# Chapter 16: Analytic functions
+
+Analytic functions are useful for summarizing data. The queries below show several examples of analytic functions. 
+
+```{r analytic_function_examples, echo=F}
+dbGetQuery(conn = conn_mysql, statement = 
+           "SELECT quarter(payment_date) AS quarter, 
+           monthname(payment_date) AS month, 
+           sum(amount) AS monthly_sales
+           FROM payment
+           WHERE year(payment_date) = 2005
+           GROUP BY quarter, month")
+
+#this query gets the monthlyrevenue and also includes the max revenue in each quarter and over the four-month period
+dbGetQuery(conn = conn_mysql, statement = 
+           "SELECT quarter(payment_date) AS quarter, 
+           monthname(payment_date) AS month, 
+           sum(amount) AS monthly_sales, 
+           max(sum(amount)) over() AS max_overall_sales, 
+           max(sum(amount)) over(partition by quarter(payment_date)) AS max_qrtr_sales
+           FROM payment
+           WHERE year(payment_date) = 2005
+           GROUP BY quarter, month")
+
+#make a column for the rank order using rank()
+dbGetQuery(conn = conn_mysql, statement = 
+           "SELECT quarter(payment_date) AS quarter, 
+           monthname(payment_date) AS month, 
+           sum(amount) AS monthly_sales, 
+           rank() over (order by sum(amount) desc) AS sales_rank
+           FROM payment
+           WHERE year(payment_date) = 2005
+           GROUP BY quarter, month
+           ORDER BY quarter, monthname(payment_date)
+           ")
+
+#create rank to be based on the quarter; SQL commands rank amounts of each month within each quarter 
+dbGetQuery(conn = conn_mysql, statement = 
+           "SELECT quarter(payment_date) AS quarter, 
+           monthname(payment_date) AS month, 
+           sum(amount) AS monthly_sales, 
+           rank() over (partition by quarter(payment_date)
+               order by sum(amount) desc) AS qrtr_rank
+           FROM payment
+           WHERE year(payment_date) = 2005
+           GROUP BY quarter, month
+           ORDER BY quarter, monthname(payment_date)
+           ")
+
+```
+
+## Ranking 
+### Ranking functions
+
+* `row_number()` returns a unique number for each row. 
+* `rank` returns the same ranking in case of a tie, with gaps in the rankings (next rank is the second-next integer value).
+* `dense_rank` returns the same ranking in case of tie, with no gaps in the rankings (meaning the next rank is the next integer value). 
+
+The query below counts the number of rentals for each customer, the customer's rank (in addition to the two types of ranks). 
+
+```{r SQL_rank, echo=F}
+#select top 10 customers based on number of rentals
+dbGetQuery(conn = conn_mysql, statement = "
+           SELECT customer_id, count(*) AS num_rentals, 
+           row_number() over (order by count(*) desc) AS row_num_rank, 
+           dense_rank() over (order by count(*) desc) AS dense_rnk
+           FROM rental 
+           GROUP BY customer_id
+           LIMIT 10")
+
+#rank customers based on total amount of money spent in each month. Use `partition by` to rank customers within each month. 
+dbGetQuery(conn = conn_mysql, statement = " 
+           SELECT c.first_name, c.last_name, monthname(payment_date) AS month,
+           sum(p.amount) AS tot_pymt, 
+           rank() over(partition by monthname(payment_date)
+               order by sum(p.amount) desc) AS rank_rev
+           FROM customer AS c 
+            INNER JOIN payment AS p
+            ON c.customer_id = p.customer_id 
+           GROUP BY c.customer_id, monthname(payment_date) 
+           ")
+
+#to select the top 5customers of each month, we need to nest the ranking in a subquery  
+dbGetQuery(conn = conn_mysql, statement = " 
+           SELECT first_name, last_name, month, tot_pymt, rank_rev
+           FROM 
+           
+               (SELECT c.first_name, c.last_name, monthname(payment_date) AS month, 
+               sum(p.amount) AS tot_pymt, 
+               rank() over(partition by monthname(payment_date)
+               order by sum(p.amount) desc) AS rank_rev
+               FROM customer AS c
+                  INNER JOIN payment AS p
+                  ON c.customer_id = p.customer_id
+               GROUP BY p.customer_id,  monthname(payment_date)) cust_rank
+          WHERE rank_rev <=5 
+           ")
+
+dbGetQuery(conn = conn_mysql, statement = "SELECT DISTINCT monthname(rental_date) FROM rental")
+```
+
+## Reporting functions
+
+Aggregate functions can be used with `over` to calculate descriptive statistics for certain groups/ranges of time. The query below calculates the total revenue for each month.  
+
+```{r reporting_functions, echo=F}
+dbGetQuery(conn = conn_mysql, statement = "SELECT sum(amount) AS tot_revenue, monthname(payment_date) AS month
+           FROM payment 
+           GROUp BY month")
+
+#return payment_month, monthly_total, & grand_total for payments above 10$, first_name, last_name (uses subquery)
+dbGetQuery(conn = conn_mysql, statement = "SELECT first_name, last_name, amount, month, monthly_total, grand_total
+           FROM 
+               (SELECT c.first_name, c.last_name, p.amount,
+               monthname(p.payment_date) AS month,
+               sum(p.amount) over (partition by monthname(p.payment_date)) AS monthly_total, 
+               sum(p.amount) over() AS grand_total
+               FROM payment AS p
+                  INNER JOIN customer AS c
+                  ON p.customer_id = c.customer_id
+               WHERE amount >= 10) AS monthly_info")
+
+#does not use subquery 
+dbGetQuery(conn = conn_mysql, statement = "SELECT c.first_name, c.last_name, p.amount,
+               monthname(p.payment_date) AS month,
+               sum(p.amount) over (partition by monthname(p.payment_date)) AS monthly_total, 
+               sum(p.amount) over() AS grand_total
+               FROM payment AS p
+                  INNER JOIN customer AS c
+                  ON p.customer_id = c.customer_id
+               WHERE amount >= 10")
+
+#return table with total monthly sales and percentage of total sales for each month
+dbGetQuery(conn = conn_mysql, statement = "SELECT monthname(payment_date) AS month, 
+           sum(amount) AS monthly_revenue,
+           round(sum(amount)/sum(sum(amount)) *100, 2) AS pct_total
+           FROM payment
+           GROUP BY monthname(payment_date)")
+
+#reporting with a descriptor column (month, monthly revenue, descriptor)
+dbGetQuery(conn = conn_mysql, statement = "SELECT monthname(payment_date) AS month, 
+           sum(amount) AS monthly_revenue,
+           CASE sum(amount) 
+               WHEN max(sum(amount)) over() THEN 'Highest'
+               WHEN min(sum(amount)) over() THEN 'Lowest'
+               ELSE 'Middle'
+           END AS descriptor
+           FROM payment 
+           GROUP BY monthname(payment_date)")
+```
+
+### Window frames
+
+Queries can also be equipped to calculate functions over desired periods of time. For example, the query below computes the rolling sum across each month. 
+
+```{r window_frames, echo=F}
+dbGetQuery(conn = conn_mysql, statement = "SELECT yearweek(payment_date) AS month, 
+                  sum(amount) AS month_total, 
+                  sum(sum(amount)) over (rows unbounded preceding) AS rolling_sum 
+                  FROM payment
+                  GROUP BY yearweek(payment_date)
+           ")
+
+#calculate rolling average over a three-week period 
+dbGetQuery(conn = conn_mysql, statement = "SELECT yearweek(payment_date) AS week, 
+           sum(amount) AS month_total, 
+           avg(sum(amount)) over (rows between 1 preceding and 1 following) AS 3_wk_avg
+           FROM payment
+           GROUP BY week")
+
+#calculate rolling weekly average. Note that range can be used to specify a date interval. Note that ORDER BY must be used with range. 
+dbGetQuery(conn = conn_mysql, statement = "SELECT date(payment_date) AS date, 
+           sum(amount), 
+           avg(sum(amount)) over (order by date(payment_date) 
+               range between interval 3 day preceding and interval 3 day following) AS week_rolling_avg
+           FROM payment 
+           GROUP BY date")
+```
+
+### Lag and lead
+
+Queries can also compare values from previous rows. The query below calculates the revenue each week and the percentage difference from the week before. The `lag` keyword is used to 
+calculate the revenue from the previous week and the `lead` keyword is used to calculate the revenue from the coming week. 
+
+```{r lag_lead, echo=F}
+#calculates weekly_revenue, revenue from previous and coming weeks
+dbGetQuery(conn = conn_mysql, statement = "SELECT yearweek(payment_date) AS week, 
+           sum(amount) AS weekly_revenue, 
+           lag(sum(amount), 1) over(order by yearweek(payment_date)) AS prev_wk_total, 
+           lead(sum(amount), 1) over(order by yearweek(payment_date)) AS next_wk_total
+           FROM payment 
+           GROUP BY yearweek(payment_date)")
+
+#calculates weekly revenue and percentage change from previous week 
+dbGetQuery(conn = conn_mysql, statement = "SELECT yearweek(payment_date) AS week, 
+           sum(amount) AS weekly_revenue, 
+           round(sum(amount)/lag(sum(amount), 1) over(order by yearweek(payment_date))*100, 2) AS pct_change
+           FROM payment 
+           GROUP BY yearweek(payment_date)
+           ORDER BY 1")
+
+#calculates weekly revenue and percentage difference from previous week 
+dbGetQuery(conn = conn_mysql, statement = "SELECT yearweek(payment_date) AS week, 
+           sum(amount) AS weekly_revenue, 
+           round((sum(amount) - lag(sum(amount), 1) over (order by yearweek(payment_date)))/
+               lag(sum(amount), 1) over(order by yearweek(payment_date))*100, 2) AS pct_difference
+           FROM payment 
+           GROUP BY yearweek(payment_date)
+           ORDER BY 1")
+```
+
+### Column value concatenation
+
+The `group_concat` function works a bit like `pivot_wider()` in that in converts a set of columns to a wide format. For example, the query below returns a the set of films with only
+4 actors and the actor names. 
+
+```{r column_value_concatenation, echo=F}
+dbGetQuery(conn = conn_mysql, statement = "SELECT f.title, 
+           group_concat(a.last_name, a.first_name order by a.last_name separator ',') AS actors
+           FROM actor AS a 
+            INNER JOIN film_actor AS fa
+            ON a.actor_id = fa.actor_id
+            INNER JOIN film AS f
+            ON fa.film_id = f.film_id
+          GROUP BY f.title
+          HAVING count(*) = 4;")
+```
+
+## Exercises
+
+```{sql chapter_16_exercises, echo=F}
+--write a query that retrieves every row from Sales_Fact, and add a column to generate a ranking based on the tot_sales column values. The highest value should receive a ranking of 1, and the lowest a ranking of 24.
+
+SELECT year_no, month_no, tot_sales, 
+   rank() over(order by tot_sales desc)
+   FROM Sales_Fact
+   
+--Modify the query from the previous exercise to generate two sets of rankings from 1 to 12, one for 2019 data and one for 2020.
+SELECT year_no, month_no, tot_sales, 
+   rank() over(partition by year_no order by tot_sales desc)
+   FROM Sales_Fact
+   
+--Write a query that retrieves all 2020 data, and include a column that will contain the tot_sales value from the previous month.
+SELECT year_no, month_no, tot_sales, 
+   lag(tot_sales, 1) over(order by month_no) AS prev_month_sales
+   FROM Sales_Fact
+   WHERE year_no = '2020'
+```
+
+# Chapter 17: Working with large datasets
+
+As organizations continue to accrue data, memory limits of relational databases are quickly exceeded and many of the following processing times become unbearably slow for many because
+the number of rows that must be examined becomes overwhelming:
+
+* full scans 
+* index creation/rebuilding
+* data archival/deletion 
+* generation of table/index statistics 
+* table relocation
+* database backups
+
+\noindent 
+One way to to allow users to efficiently query data is to divide data in any given table across several component tables or *partitions*. 
+
+## Partitioning concepts
+
+Although partitions largely resemble each other, several administrative features can differ between them (e.g., different compression schemes, local indexes can be dropped for some
+partitions, table statistics can be frozen on some partitions, individual partitions can be pinned into memory or stored in a database's flash storage tier).
+
+### Table partitioning
+
+Tables will commonly be partitioned by row and, when done so, need an indicator to determine partition that rows will be sent to. In most cases, a partition key is added as a column
+and a partitioning function is applied to this column to which partition each row is sent to. 
+
+### Index partitioning
+
+If a partitioned table has indices, then the index can be left as is (in which case it remains a *global index*) or be divided into local indexes. Global indexes are useful for q
+queries that do not require a full table scane (e.g., `SELECT sum(amount) FROM sales WHERE geo_region_cd = 'US'`). 
+
+### Partitioning methods
+#### Range partitioning
+
+Range partitioning is commonly used and divides data according to specified ranges of any column. For example, we could partition a table such that data from each month are
+partitioned into individual tables. The partitioning schema can be defined when creating the table, such as in the below example query that divides the `sales` table into six 
+partitions:
+
+```{r range_partition_creation, echo=F}
+#partition by week 
+dbGetQuery(conn = conn_mysql, statement = "CREATE TABLE sales
+         (sale_id INT NOT NULL,
+          cust_id INT NOT NULL,
+          store_id INT NOT NULL,
+          sale_date DATE NOT NULL,
+          amount DECIMAL(9,2)
+         )
+        PARTITION BY RANGE (yearweek(sale_date))
+         (PARTITION s1 VALUES LESS THAN (202002),
+          PARTITION s2 VALUES LESS THAN (202003),
+          PARTITION s3 VALUES LESS THAN (202004),
+          PARTITION s4 VALUES LESS THAN (202005),
+          PARTITION s5 VALUES LESS THAN (202006),
+          PARTITION s999 VALUES LESS THAN (MAXVALUE))")
+
+#partition by month 
+dbGetQuery(conn = conn_mysql, statement = "CREATE TABLE sales_month
+         (sale_id INT NOT NULL,
+          cust_id INT NOT NULL,
+          store_id INT NOT NULL,
+          sale_date DATE NOT NULL,
+          amount DECIMAL(9,2)
+         )
+        PARTITION BY RANGE (EXTRACT(year_month FROM sale_date))
+         (PARTITION s1 VALUES LESS THAN (200505),
+          PARTITION s2 VALUES LESS THAN (200506),
+          PARTITION s3 VALUES LESS THAN (200507),
+          PARTITION s4 VALUES LESS THAN (200508),
+          PARTITION s5 VALUES LESS THAN (200602), 
+          PARTITION s999 VALUES LESS THAN (MAXVALUE))")
+```
+
+\noindent
+The `partitions` table in the `information_schema` database can be queried to view metadata about partitions. 
+
+```{r view_partition_metadata, echo=F}
+dbGetQuery(conn = conn_mysql, statement = "SELECT *
+           FROM information_schema.partitions
+           WHERE table_name = 'sales' 
+           ORDER BY partition_ordinal_position")
+
+dbGetQuery(conn = conn_mysql, statement = "SELECT *
+           FROM information_schema.partitions
+           WHERE table_name = 'sales_month' 
+           ORDER BY partition_ordinal_position")
+```
+Because we do not want the last partition (`s999`) to become overwhelming large, modifications can be made to it after having created the table. 
+
+```{r reorganize_partition, echo=F}
+dbGetQuery(conn = conn_mysql, statement = "ALTER TABLE sales 
+         REORGANIZE PARTITION s999 INTO 
+         (PARTITION s6 VALUES LESS THAN (202007), 
+         PARTITION s7 VALUES LESS THAN (202008),
+         PARTITION s999 VALUES LESS THAN (MAXVALUE))")
+```
+
+### List partitioning 
+
+Tables can also be partitioned by specify string values. For example, if a table has a column that contains the region, partitions can be created according to sets of regions. The query
+below partitions tables according to North America, Asia, and Europe. 
+
+```{r query_example, echo=F}
+dbGetQuery(conn = conn_mysql, statement = "CREATE TABLE sales
+         (sale_id INT NOT NULL,
+          cust_id INT NOT NULL,
+          store_id INT NOT NULL,
+          sale_date DATE NOT NULL,
+          amount DECIMAL(9,2)
+         )
+         PARTITION BY LIST COLUMNS (geo_region_cd)
+            (PARTITION NORTHAMERICA VALUES IN ('US_NE','US_SE','US_MW','US_NW','US_SW','CAN','MEX'), 
+            PARTITION EUROPE VALUES IN ('EUR_E','EUR_W'),
+            PARTITION ASIA VALUES IN ('CHN','JPN','IND'))")
+
+#forgot to add geo_region_cd column 
+ bGetQuery(conn = conn_mysql, statement = "ALTER TABLE sales
+                     ADD geo_region_cd VARCHAR(6) NOT NULL")
+ 
+ #need to redefine the partitions because they did not register on the first try (geo_region_cd) column not defined
+ dbGetQuery(conn = conn_mysql, statement = "ALTER TABLE sales 
+         PARTITION BY LIST COLUMNS (geo_region_cd)
+            (PARTITION NORTHAMERICA VALUES IN ('US_NE','US_SE','US_MW','US_NW','US_SW','CAN','MEX'), 
+            PARTITION EUROPE VALUES IN ('EUR_E','EUR_W'),
+            PARTITION ASIA VALUES IN ('CHN','JPN','IND'))")
+
+```
+
+Note that MySQL will return an error if rows are inserted with country values not contained within the partition definitions. To allow new values to be stored in the partitions, the partition has to be reorganized. 
+
+```{r partition_reorganization, echo=F}
+dbGetQuery(conn = conn_mysql, statement = "INSERT INTO sales
+            VALUES
+           (1, 1, 1, '2020-01-18', 2765.15, 'US_NE'), 
+           (3, 6, 27, '2020-03-11', 4267.12, 'KOR')")
+```
+
+### Hash partitioning 
+
+Divides table into desired number of partitions that are of equal size. When rows are added to the table, they will be evenly distributed across the partitions. 
+
+### Composite partitioning
+
+Divided tables into partitions and subpartitions. 
+
+## Clustering
+
+Partitioning has several advantages. Data can quickly be searched and joined because queries only have to interact with a few number of partitions. Additionally, administrator can 
+easily manage data. However, if a database base has hundreds of users, the database system will likely not have enough CPU, memory, or bandwith. One solution is to let multiple servers
+act as a database. One such strategy is a shared-disk/shared-cache configuration where each server has access to all data on each server (Oracle is the leader in clustering databases).
+
+## Sharding
+
+Applies partitining to databases. Sharding is basically not used anymore because of the time-intensive maintenance required. 

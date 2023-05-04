@@ -1,0 +1,727 @@
+---
+title: "Chapter 9: Subqueries"
+header-includes:
+   - \usepackage{nccmath}
+   - \usepackage{caption}
+   - \usepackage{longtable}
+   - \usepackage{setspace}
+   - \usepackage{pdflscape}
+   - \usepackage{booktabs}
+   - \usepackage{longtable}
+   - \usepackage{array}
+   - \usepackage{multirow}
+   - \usepackage{wrapfig}
+   - \usepackage{float}
+   - \usepackage{colortbl}
+   - \usepackage{pdflscape}
+   - \usepackage{tabu}
+   - \usepackage{threeparttable}
+   - \usepackage{threeparttablex}
+   - \usepackage[normalem]{ulem}
+   - \usepackage{makecell}
+   - \usepackage{xcolor}
+   - \usepackage{amsthm}
+   - \newcommand{\blandscape}{\begin{landscape}}
+   - \newcommand{\elandscape}{\end{landscape}}
+   - \usepackage{upgreek}  #required for non-italicized Greek letters
+   - \usepackage{subcaption}
+   
+      #- \captionsetup[table]{textfont={it}, labelfont={bf}, singlelinecheck=false, labelsep=newline}
+   - \captionsetup[figure]{labelfont={normalfont, bf}, singlelinecheck=false, labelsep=newline}
+   
+   - \DeclareCaptionFont{figCaptionFont}{\fontfamily{phv}} #sets caption font to sans serif font of Helvetica 
+   - \DeclareCaptionFont{figCaptionSize}{\footnotesize} #set caption font size to footnote 
+   - \DeclareCaptionFont{figCaptionStyle}{\textup}  #set caption font to non-italicized font  
+   - \DeclareCaptionLabelSeparator{captionSep}{\newline\newline} #separates figure label and figure title with required white space
+   - \captionsetup[figure]{font = {figCaptionFont,figCaptionSize, figCaptionStyle}, labelsep = captionSep,  justification=justified}
+
+#setup for tables
+   - \captionsetup[table]{font = {figCaptionFont,figCaptionSize,figCaptionStyle}, labelfont={bf}, labelsep=captionSep, justification = raggedright, margin = {0cm,0cm}}
+   - \setlength\parindent{24pt}
+   
+format: "pandoc"
+output: pdf_document
+---
+
+```{r setup, include=F}
+knitr::opts_knit$set(root.dir = '~/Desktop/Datacamp/SQL')
+
+library(easypackages)
+packages_to_load <- c('tidyverse', 'RSQLite', 'dbplyr', 'DBI', 'odbc', 'RMySQL', 'reticulate', 'kableExtra', 'knitr', 'magick')
+packages(packages_to_load)
+
+reticulate::use_python(python = "/usr/local/msql/bin/")
+knitr::knit_engines$set(python.reticulate = FALSE)
+```
+
+```{r server_connection, echo=F}
+#set up connection with MySQL server; connect to meta data database
+conn_mysql <- dbConnect(drv = MySQL(), user = 'root', port = 3306, dbname = 'information_schema', password = 'tiramisu')
+
+dbGetQuery(conn = conn_mysql, statement = "USE sakila")
+#set up connection with SQLite server
+conn_sqlite <- dbConnect(RSQLite::SQLite(), 'professor_data/unitransparenz.sqlite')
+```
+
+# Chapter 9: Subqueries
+
+Subqueries are often needed when dealing with large data sets to free up memory. Instead of storing a result set in temporary memory, the result set can be generated within a query that
+is then inserted into another query. By using subqueries, the data contained in them disappears after the query is finished computing. 
+
+```{r noncorrelated_subqueries, echo=F}
+#Note that 
+dbGetQuery(conn = conn_mysql, 
+           statement = "SELECT city_id, city
+           FROM city
+           WHERE country_id NOT IN
+           (SELECT country_id FROM country WHERE country <> 'India')")
+
+```
+
+#### The ALL operator
+
+The `ALL` operator makes comparisons between a single value and every value in a set. For example, the below query finds all customers who have never gotten a free film rental. Note that
+the query can also be computed using `NOT`. Note that NULL values should be watched out for because a comparison between a value and a NULL value yields `unknown`.
+
+```{r all_operator, echo=F}
+dbGetQuery(conn = conn_mysql, 
+           statement = "SELECT first_name, last_name 
+           FROM customer 
+           WHERE customer_id <> ALL
+           (SELECT customer_id 
+           FROM payment 
+           WHERE amount = 0)")
+
+dbGetQuery(conn = conn_mysql, 
+           statement = "SELECT first_name, last_name 
+           FROM customer 
+           WHERE customer_id NOT IN
+           (SELECT customer_id 
+           FROM payment 
+           WHERE amount = 0 OR amount)")
+
+#The subquery in this example returns the total number of film rentals for all customers in North America, and the containing query returns all customers whose total number of film rentals exceeds any of the North American customers.
+dbListFields(conn = conn_mysql, name = 'customer')
+dbGetQuery(conn = conn_mysql,
+           statement = "SELECT c.first_name, c.last_name, cty.city, cnty.country, count(*) AS num_rentals
+           FROM rental AS r
+           INNER JOIN customer AS c
+           ON r.customer_id = c.customer_id
+           INNER JOIN address AS a
+           ON c.address_id = a.address_id
+           INNER JOIN city AS cty
+           ON a.city_id = cty.city_id
+           INNER JOIN country AS cnty
+           ON cty.country_id = cnty.country_id
+           #WHERE cnty.country NOT IN ('Canada', 'United States', 'Mexico')
+           GROUP BY r.customer_id
+           
+           HAVING num_rentals > ALL
+           (SELECT count(*) FROM rental AS r
+           INNER JOIN customer AS c
+           ON r.customer_id = c.customer_id
+           INNER JOIN address AS a
+           ON c.address_id = a.address_id
+           INNER JOIN city AS cty
+           ON a.city_id = cty.city_id
+           INNER JOIN country AS cnty
+           ON cty.country_id = cnty.country_id
+           WHERE cnty.country IN ('Canada', 'United States', 'Mexico')
+           GROUP BY r.customer_id)")
+
+```
+
+#### The ANY operator
+
+The `ANY` operator can be thought as setting a more lenient evaluator than the `ALL` operator. Instead of comparing a single value to each value in a set and only returning the value if
+if differs from each set value in the desired way, the `ANY` operator returns a value if it differs from any single set value in the desired way. The below query returns customers
+whose total payment amount exceeds any of the total payment amounts in Bolivia, Paraguay, or Chile. 
+
+```{r any_operator, echo=F}
+dbGetQuery(conn = conn_mysql, 
+           statement = "SELECT customer_id, sum(amount) FROM payment
+           GROUP BY customer_id
+           HAVING sum(amount) > ANY
+           (SELECT sum(p.amount) FROM payment p
+           INNER JOIN customer c
+           ON p.customer_id = c.customer_id INNER JOIN address a
+           ON c.address_id = a.address_id INNER JOIN city ct
+           ON a.city_id = ct.city_id
+           INNER JOIN country co
+           ON ct.country_id = co.country_id
+           WHERE co.country IN ('Bolivia','Paraguay','Chile')
+           GROUP BY co.country )")
+```
+
+### Multicolumn subqueries
+
+The query below finds all actors with first name 'Monroe' that star in a PG film. 
+
+```{r multicolumn_subquery, echo=F}
+dbListFields(conn = conn_mysql, name = 'film')
+dbGetQuery(conn = conn_mysql, 
+           statement = "SELECT a.first_name, a.last_name, f.rating, f.title
+           FROM actor AS a
+           INNER JOIN film_actor AS fa
+           ON a.actor_id = fa.actor_id
+           INNER JOIN film AS f
+           ON fa.film_id = f.film_id
+           WHERE a.last_name = 'Monroe' AND f.rating = 'PG'")
+
+```
+
+## Correlated subquery 
+
+Correlated subqueries are executed one for each candidate. The following query finds customers who rented 20 movies. Note how a correlated subquery is needed so that the `num_rentals`
+column is not returned. Also note that, because each customer ID is compared to 20, correlated subqueries can be computationally demanding when the subquery size is large. As a last
+note, the `GROUP BY` clause is not needed in the correlated subquery because it is implicitly understood (I have included it for clarity). 
+
+
+```{r correlated_subquery, echo=F}
+#using no subquery 
+dbGetQuery(conn = conn_mysql,
+           statement = "SELECT c.first_name, c.last_name, count(*) as num_rentals 
+           FROM payment AS p
+           INNER JOIN customer AS c
+           ON p.customer_id = c.customer_id
+           GROUP BY p.customer_id
+           HAVING num_rentals = 20
+           ")
+
+#using correlated subquery 
+dbGetQuery(conn = conn_mysql, 
+           statement = "SELECT c.first_name, c.last_name 
+           FROM customer c
+           WHERE 20 = 
+           (SELECT count(*) FROM rental AS r
+           WHERE r.customer_id = c.customer_id
+           GROUP BY r.customer_id)")
+
+#find customers who spent between $180-$240 on film rentals 
+dbListFields(conn = conn_mysql, name = 'payment')
+
+dbGetQuery(conn = conn_mysql, 
+           statement = "SELECT c.first_name, c.last_name, sum(p.amount) AS revenue_sum
+           FROM customer AS c 
+           INNER JOIN payment AS p
+           ON c.customer_id = p.customer_id
+           GROUP BY c.customer_id 
+           HAVING revenue_sum BETWEEN 180 AND 240")
+
+#using subquery to find customers who spent between $180-$240 on film rentals 
+dbGetQuery(conn = conn_mysql, 
+           statement = "SELECT c.first_name, c.last_name
+           FROM customer AS c
+           WHERE
+           (SELECT sum(p.amount) AS revenue_sum
+           FROM payment AS p
+           WHERE p.customer_id = c.customer_id
+           GROUP BY p.customer_id) 
+           BETWEEN 180 AND 240")
+```
+
+### The EXISTS operator
+
+The `EXISTS` operator can be used to identify that a relationship exists without regard for quantity. The query below identifies customers who rented at least one film before May 25,
+2005. Note that the use of `SELECT 1` gets the number of rows that satisfy the condition. The `NOT` operator can also be used with `EXISTS` to find rows that do not meet a condition 
+described in a subquery. 
+
+```{r exists_operator, echo=F}
+dbListFields(conn = conn_mysql, name = 'rental')
+dbGetQuery(conn = conn_mysql, 
+           statement = "SELECT c.first_name, c.last_name 
+           FROM customer AS c
+           WHERE EXISTS
+           (SELECT 1 
+           FROM rental AS r
+           WHERE c.customer_id = r.customer_id
+           AND date(r.rental_date) < '2005-05-25')")
+
+
+#no subquery 
+dbGetQuery(conn = conn_mysql,
+           statement = "SELECT c.first_name, c.last_name 
+           FROM customer AS c
+           INNER JOIN rental AS r
+           ON c.customer_id = r.customer_id
+           WHERE date(r.rental_date) < '2005-05-25'")
+```
+
+## Data manipulation using correlated strategies
+
+Subqueries can also be used to update fields in tables. The query below updates the `last_update` column in the `customer` table to be the last time a customer rented a film. Note that 
+if any customer has not rented a film, a NULL value will be inserted into the corresponding row of the `last_update` column and overwrite potentially meaningful data. To prevent the 
+insertion of undesired NULL values, the latest values in the `rental` table could be checked for each customer or a more refined query could be generated.
+
+```{r manipulation_subquery1, echo=F}
+#to convert datetimes to NULL values, the corresponding has to first be enabled to take on null values
+dbExecute(conn = conn_mysql, 
+          statement = "ALTER TABLE rental MODIFY COLUMN rental_date DATETIME NULL")
+
+#set the rental_date values for the 1st customer to NULL 
+dbListFields(conn = conn_mysql, name = 'rental')
+dbExecute(conn = conn_mysql, 
+          statement = "UPDATE rental 
+          SET rental_date = NULL 
+          WHERE customer_id = 1")
+
+#count number of values in rental that are NULL for customer ID of 1 (check)
+dbGetQuery(conn = conn_mysql,
+           statement = "SELECT count(*) AS num_values
+           FROM rental 
+           WHERE rental_date IS NULL 
+           AND customer_id = 1")
+
+#let's now update the last_update field of the customer table using the latest rental date from each customer
+#set the latest rental_date for the 1st customer to NULL 
+dbExecute(conn = conn_mysql, 
+          statement = "UPDATE customer AS c 
+          SET c.last_update =
+          (SELECT max(r.rental_date) FROM rental AS r 
+          WHERE r.customer_id = c.customer_id 
+          GROUP BY r.customer_id)")
+
+#note the NULL value
+dbGetQuery(conn = conn_mysql,
+           statement = "SELECT last_update, customer_id FROM customer WHERE customer_id")
+```
+
+Another way to prevent NULL values from appearing while updating cells is to construct a query with a correlated subquery. The second subquery is computed for each row in `last_update` 
+and checks whether each customer has at least one rental. 
+
+```{r manipulation_subquery2, echo=F}
+#to prevent the occurrence of NULL values, use the following more advanced query 
+dbGetQuery(conn = conn_mysql,
+           statement = "UPDATE customer AS c 
+           SET c.last_update =
+           (SELECT max(r.rental_date) FROM rental AS r
+           WHERE r.customer_id = c.customer_id
+           GROUP BY r.customer_id)
+           
+           WHERE EXISTS
+           (SELECT 1 FROM rental AS r
+           WHERE r.customer_id = c.customer_id
+           GROUP BY r.customer_id)")
+```
+
+Correlated subqueries can also be used to delete data. Deleting data is often needed to maintain a database. For example, customers who have not rented a film in the past year can be 
+deleted as shown in the below query. More specifically, the last rental date is calculated for each customer and the time that has elapsed since then it computed. If this value is
+greater than 365 days, then the value is deleted. In trying to delete customers who have not rented films in the past year, the first query cannot delete the rows because of a foreign
+key constraint of `customer_id` values in the `customer` on the `customer_id` values in the `payment` table. That is, the `customer_id` values in the `payment` table can only be from the
+values in the `customer_id` table. Therefore, if we try deleting `customer_id` values in the `customer` table, then the `payment` table would then contain `customer_id` values not 
+contained in the `customer` table. Although, the `customer_id` values deleted out of the `customer` table would not be deleted out of the `rental` table. To ensure data does not remains
+from customers who have not rented films in the past year, we can check the .schema file for the creation of the tables and modify the foreign key constraints of the `payment` and 
+`rental` tables such that when `customer_id` values are deleted, this action cascades to all other tables with the `customer_id` column. 
+
+```{r delete_data, echo=F}
+#returns tables that contain customer_id column 
+dbGetQuery(conn = conn_mysql, 
+           statement = "SELECT DISTINCT TABLE_NAME 
+    FROM INFORMATION_SCHEMA.COLUMNS
+    WHERE COLUMN_NAME = 'customer_id'
+        AND TABLE_SCHEMA='sakila'")
+
+dbGetQuery(conn = conn_mysql, statement = "DESC payment")
+dbGetQuery(conn = conn_mysql, 
+           statement = "DELETE FROM customer
+           WHERE 365 < ALL
+           (SELECT datediff('2006-12-01', r.rental_date) days_since_last_rental 
+           FROM rental AS r
+           WHERE r.customer_id = customer.customer_id)")
+
+#check number of rows in customer table; all data are deleted
+dbGetQuery(conn = conn_mysql,
+           statement = "SELECT count(*) FROM customer")
+```
+
+## When to use subqueries
+### Subqueries as data sources
+
+Subquery is needed to group data before computing inner join. If we try linking all three tables (`payment`, `customer`, `rental`) and then grouping by `customer_id`, the query will
+return incorrect values for grouped calculations (e.g., the amount of money each customer spend on rentals). When joining these three tables, a table is created where each `rental_id` is
+multiplied by the number of `payment_id` values for each `customer_id`. For example, customer 1 made 32 payments and had 32 rentals, so a joining these three tables would create 32 x 32
+= 1024 for customer 1. When `GROUP BY customer_id` is used after joining the three tables, each payment amount is incorrectly multiplied by the number of associated rental values. 
+Errors in aggregation can be checked by grouping by the middle-level variable (e.g., `rental_id`). Essentially, these errors occur when data at the same level are joined. In this case,
+the `rental` and `payment` data sets are on the level of purchases. One easy way to avoid these errors is to not join tables at the same level, which can be accomplished using a 
+subquery. 
+
+By using subqueries, small sets of data can be used to join all three tables, thus solving the problem that was encountered using inner joins. 
+
+```{r subquery_data_source, echo=F}
+#get total revenue for each customer, first name, last name, and number of rentals
+dbListFields(conn = conn_mysql, name = 'rental')
+
+#the actual revenue per customer is being multiplied by the number of rentals and so is incorrect; this shows how the data is incorrectly aggregated
+dbGetQuery(conn = conn_mysql, 
+           statement = "SELECT c.customer_id, sum(amount) as revenue_incorrect
+           FROM customer AS c
+           INNER JOIN rental AS r
+           ON c.customer_id = r.customer_id
+           INNER JOIN payment AS p
+           ON r.customer_id = p.customer_id
+           GROUP BY r.rental_id")
+
+#Method 1: Ignore rental table
+dbGetQuery(conn = conn_mysql, 
+           statement = "SELECT c.customer_id, c.first_name, c.last_name, sum(amount) as revenue_correct
+           FROM customer AS c
+           INNER JOIN payment AS p
+           ON c.customer_id = p.customer_id
+           GROUP BY c.customer_id")
+
+#Method 2: Subquery
+dbGetQuery(conn = conn_mysql, 
+           statement = "SELECT c.first_name, c.last_name, pymnt.num_rentals, pymnt.tot_payments
+           FROM customer AS c
+           INNER JOIN
+           (SELECT customer_id, count(*) AS num_rentals, sum(amount) AS tot_payments
+           FROM payment
+           GROUP BY customer_id
+           ) AS pymnt
+           ON c.customer_id = pymnt.customer_id")
+
+#Method 2a: Using subqueries to join three data tables, with two tables at the same level 
+dbGetQuery(conn = conn_mysql, 
+           statement = "SELECT c.first_name, c.last_name, pymnt.num_rentals, pymnt.tot_payments, rent.latest_rental_date
+           FROM customer AS c
+           INNER JOIN 
+           (SELECT customer_id, count(*) AS num_rentals, sum(amount) AS tot_payments
+           FROM payment
+           GROUP BY customer_id
+           ) AS pymnt
+           ON c.customer_id = pymnt.customer_id
+           INNER JOIN 
+           (SELECT customer_id, max(rental_date) AS latest_rental_date 
+           FROM rental 
+           GROUP BY customer_id) AS rent
+           ON c.customer_id = rent.customer_id
+           ")
+```
+
+### Data fabrication
+
+Subqueries can also be used to generate data that does not exist in any form in the database. The query that follows produces a table that groups customers according to how much money 
+they have spent on film rentals. 
+
+```{r data_fabrication, echo=F}
+#join three rows using UNION ALL
+dbGetQuery(conn = conn_mysql, 
+           statement = "SELECT 'Small Fry' AS name, 0 AS low_limit, 74.99 AS high_limit 
+           UNION 
+           SELECT 'Average Joes' AS name, 75 AS low_limit, 149.99 AS high_limit
+           UNION 
+           SELECT 'Heavy Hitters' AS name, 150 AS low_limit, 9999999.99 AS high_limit")
+
+#categorize customers into one of these three categories. First query returns total amount of money spent by each customer. Second query creates table that determines categories. 
+#Last part indicates how to categorize values of tot_payments.
+dbGetQuery(conn = conn_mysql,
+           statement = "SELECT pymnt_grps.name, count(*) AS num_customers, 
+           sum(pymnt.num_rentals)/count(*) AS avg_num_cust_transactions, 
+           sum(pymnt.num_rentals) AS number_cat_rentals,
+           avg(pymnt.tot_payments) AS avg_cust_revenue
+           
+           FROM (SELECT customer_id,
+           count(*) AS num_rentals, sum(amount) AS tot_payments
+           FROM payment
+           GROUP BY customer_id) AS pymnt
+           INNER JOIN 
+           
+           (SELECT 'Small Fry' AS name, 0 AS low_limit, 74.99 AS high_limit 
+           UNION 
+           SELECT 'Average Joes' AS name, 75 AS low_limit, 149.99 AS high_limit
+           UNION 
+           SELECT 'Heavy Hitters' AS name, 150 AS low_limit, 9999999.99 AS high_limit) AS pymnt_grps
+           
+           ON pymnt.tot_payments BETWEEN pymnt_grps.low_limit AND pymnt_grps.high_limit
+           GROUP BY pymnt_grps.name")
+
+dbGetQuery(conn = conn_mysql, 
+           statement = "SELECT * FROM payment LIMIT 10")
+
+```
+
+### Task-oriented subqueries
+
+Subqueries can also be used to more efficiently compute queries. The first query below computes the total amount of money and the total number of rentals for each customer. 
+
+```{r task_oriented, echo=F}
+#
+dbGetQuery(conn = conn_mysql, 
+           statement = "SELECT c.first_name, c.last_name, ct.city,
+           sum(p.amount) tot_payments, count(*) tot_rentals
+           FROM payment p
+           INNER JOIN customer c
+           ON p.customer_id = c.customer_id
+           INNER JOIN address a
+           ON c.address_id = a.address_id
+           INNER JOIN city ct
+           ON a.city_id = ct.city_id
+           GROUP BY c.customer_id")
+```
+
+### Common table expressions (CTEs)
+
+CTEs offer a flexible way of handling results sets in that they can reference information defined above them in the same `with` clause. The following query finds the revenues generated
+by PG-rated films where a cast member had a last name that begins with 'S'. The first two queries rely inner joins and the third query uses CTEs. CTEs allow code to be more readable and
+are also more effective for recursive coding. 
+
+```{r common_table_expression, echo=F}
+#let's first aggregate at the actor level; 3897.64	
+dbListFields(conn = conn_mysql, name = 'rental')
+dbGetQuery(conn = conn_mysql, 
+           statement = "SELECT sum(revenue_actor) AS total_revenue FROM 
+           (SELECT a.first_name, a.last_name, sum(p.amount) AS revenue_actor
+           FROM actor AS a
+           
+           INNER JOIN film_actor AS fa
+           ON a.actor_id = fa.actor_id
+           INNER JOIN film AS f
+           ON fa.film_id = f.film_id
+           INNER JOIN inventory AS i
+           ON f.film_id = i.film_id
+           INNER JOIN rental AS r
+           ON i.inventory_id = r.inventory_id
+           INNER JOIN payment AS p
+           ON r.rental_id = p.rental_id
+           
+           WHERE a.last_name LIKE 'S%' AND
+           f.rating = 'PG'
+           GROUP BY a.actor_id
+           ORDER BY 3 DESC) AS actor_revenue
+           ")
+
+#let's not check if we get the same value when aggregating at the film level; $3897.64	
+dbGetQuery(conn = conn_mysql, 
+           statement= "SELECT sum(revenue_actor) AS total_revenue FROM 
+           (SELECT f.title, sum(p.amount) AS revenue_actor
+           FROM actor AS a
+           
+           INNER JOIN film_actor AS fa
+           ON a.actor_id = fa.actor_id
+           INNER JOIN film AS f
+           ON fa.film_id = f.film_id
+           INNER JOIN inventory AS i
+           ON f.film_id = i.film_id
+           INNER JOIN rental AS r
+           ON i.inventory_id = r.inventory_id
+           INNER JOIN payment AS p
+           ON r.rental_id = p.rental_id
+           
+           WHERE a.last_name LIKE 'S%' AND
+           f.rating = 'PG'
+           GROUP BY f.title
+           ORDER BY 2 DESC) as film_revenue
+           ")
+
+
+#let's now use a common table expression. First CTE obtains actor names where last name begins with S 
+#second CTE uses those name to find the films they appear in 
+#the third CTE uses the film titles to 
+dbGetQuery(conn = conn_mysql, 
+           statement = "WITH actors_s AS
+           (SELECT actor_id, first_name, last_name
+           FROM actor
+           WHERE last_name LIKE 'S%'),
+           
+               actors_s_pg AS
+               (SELECT s.actor_id, s.first_name, s.last_name,
+               f.film_id, f.title 
+               FROM actors_s AS s
+               INNER JOIN film_actor AS fa 
+               ON s.actor_id = fa.actor_id
+               INNER JOIN film AS f
+               ON f.film_id = fa.film_id
+               WHERE f.rating = 'PG'), 
+           
+               actors_s_pg_revenue AS
+               (SELECT spg.first_name, spg.last_name, p.amount
+               FROM actors_s_pg AS spg
+               INNER JOIN inventory i
+               ON i.film_id = spg.film_id
+               INNER JOIN rental r
+               ON i.inventory_id = r.inventory_id 
+               INNER JOIN payment p
+               ON r.rental_id = p.rental_id
+               ) 
+           SELECT spg_rev.first_name, spg_rev.last_name,
+           sum(spg_rev.amount) AS tot_revenue
+           FROM actors_s_pg_revenue spg_rev
+           GROUP BY spg_rev.first_name, spg_rev.last_name 
+           ORDER BY 3 desc")
+```
+
+
+### Subqueries as expression generators
+
+Subqueries can also be used where expressions are used (i.e., in `SELECT`, `ORDER`, `VALUES`, AND `INSERT` clauses). The code below computes the total amount of money spent by each 
+customer and the city each customer resides in by constructing three temporary tables: one for the first name, one for the last name, and one for the city. 
+
+```{r subqeury_expression1, echo=F}
+dbGetQuery(conn = conn_mysql,
+           statement = "SELECT 
+           (SELECT c.first_name FROM customer AS c
+           WHERE c.customer_id = p.customer_id) AS first_name, 
+           
+           (SELECT c.last_name FROM customer AS c
+           WHERE c.customer_id = p.customer_id) AS last_name, 
+           
+           (SELECT ct.city
+           FROM customer AS c
+           INNER JOIN address AS a
+           ON c.address_id = a.address_id 
+           INNER JOIN city AS ct
+           ON a.city_id = ct.city_id
+           WHERE c.customer_id = p.customer_id) AS city, 
+           
+           sum(p.amount) tot_payments,
+           count(*) tot_rentals
+           FROM payment AS p
+           GROUP BY p.customer_id")
+
+```
+
+The query below orders actors by the number of films they have appeared in.
+
+```{r subquery_expression2, echo=F}
+dbListFields(conn = conn_mysql, name = 'film_actor')
+dbGetQuery(conn = conn_mysql,
+           statement = "SELECT a.first_name, a.last_name, count(f.title) AS num_films
+           FROM actor AS a
+           INNER JOIN film_actor AS fa
+           ON a.actor_id = fa.actor_id
+           INNER JOIN film AS f 
+           ON fa.film_id = f.film_id
+           GROUP BY a.actor_id
+           ORDER BY num_films DESC")
+
+#use a subquery in ORDER BY; downside is that we cannot access number of films per actor
+dbGetQuery(conn = conn_mysql,
+           statement = "SELECT a.actor_id, a.first_name, a.last_name
+           FROM actor AS a
+           ORDER BY
+          (SELECT count(*) AS num_films
+          FROM film_actor fa WHERE fa.actor_id = a.actor_id) DESC")
+```
+
+```{r subquery_expression3, echoF}
+
+dbGetQuery(conn = conn_mysql,
+           statement = "INSERT INTO film_actor (actor_id, film_id, last_update)
+           VALUES (
+           (SELECT actor_id FROM actor
+           WHERE first_name = 'JENNIFER' AND last_name = 'DAVIS'),
+           (SELECT film_id FROM film
+           WHERE title = 'ACE GOLDFINGER'),
+           now()")
+```
+## Exercises
+
+```{r exercises_chapter9, echo=F}
+#1. Construct a query against the film table that uses a filter condition with a 
+#noncorrelated subquery against the category table to find all action films (category.name = 'Action').
+
+#find which tables contain category_id column 
+dbGetQuery(conn = conn_mysql, 
+           statement = "SELECT DISTINCT TABLE_NAME 
+    FROM INFORMATION_SCHEMA.COLUMNS
+    WHERE COLUMN_NAME = 'category_id'
+        AND TABLE_SCHEMA='sakila'")
+dbListFields(conn = conn_mysql, name = "category")
+
+##1a) Using inner joins
+dbGetQuery(conn = conn_mysql,
+           statement = "SELECT f.title, c.name
+           FROM film AS f 
+           INNER JOIN film_category AS fc
+           ON f.film_id = fc.film_id
+           INNER JOIN category AS c
+           ON fc.category_id = c.category_id
+           WHERE c.name = 'Action'")
+
+##1b) Using noncorrelated subquery 
+dbGetQuery(conn = conn_mysql,
+           statement = "SELECT f.title
+           FROM film AS f 
+           WHERE f.film_id IN 
+            (SELECT fc.film_id
+            FROM film_category AS fc 
+            INNER JOIN category AS c
+            ON fc.category_id = c.category_id 
+            WHERE c.name = 'Action')")
+
+#2. Rework the query from Exercise 9-1 using a correlated subquery against the category and film_category tables to achieve the same results. 
+
+dbGetQuery(conn = conn_mysql,
+           statement = "SELECT f.title
+           FROM film AS f 
+           WHERE EXISTS 
+            (SELECT 1
+            FROM film_category AS fc 
+            INNER JOIN category AS c
+            ON fc.category_id = c.category_id 
+            WHERE c.name = 'Action' AND
+            f.film_id = fc.film_id)")
+
+#3. Join the following query to a subquery against the film_actor table to show the level of each actor:
+#SELECT 'Hollywood Star' level, 30 min_roles, 99999 max_roles UNION ALL
+#SELECT 'Prolific Actor' level, 20 min_roles, 29 max_roles UNION ALL
+#SELECT 'Newcomer' level, 1 min_roles, 19 max_roles
+
+#The subquery against the film_actor table should count the number of rows for each actor using group by actor_id, and the count should be compared to the min_roles/max_roles columns to determine which level each actor belongs to.
+
+##determine the number of movies for each actor 
+dbListFields(conn = conn_mysql, name = 'actor')
+dbGetQuery(conn = conn_mysql, 
+           statement = "SELECT actor_group.level AS group, count(*) AS num_actors
+           FROM 
+           
+           (SELECT actor_id, count(*) AS num_starring_roles 
+           FROM film_actor
+           GROUP BY actor_id) AS actor_info
+           
+           INNER JOIN 
+           (SELECT 'Hollywood Star' AS level, 30 AS min_roles, 99999 AS max_roles 
+           UNION 
+           SELECT 'Prolific Actor' AS level, 20 AS min_roles, 29 AS max_roles 
+           UNION 
+           SELECT 'Newcomer' AS level, 1 AS min_roles, 19 AS max_roles) AS actor_group
+           
+           ON actor_info.num_starring_roles BETWEEN actor_group.min_roles AND actor_group.max_roles 
+           GROUP BY actor_group.level")
+
+
+dbGetQuery(conn = conn_mysql,
+           statement = "SELECT pymnt_grps.name, count(*) AS num_customers, 
+           sum(pymnt.num_rentals)/count(*) AS avg_num_cust_transactions, 
+           sum(pymnt.num_rentals) AS number_cat_rentals,
+           avg(pymnt.tot_payments) AS avg_cust_revenue
+           
+           FROM (SELECT customer_id,
+           count(*) AS num_rentals, sum(amount) AS tot_payments
+           FROM payment
+           GROUP BY customer_id) AS pymnt
+           INNER JOIN 
+           
+           (SELECT 'Small Fry' AS name, 0 AS low_limit, 74.99 AS high_limit 
+           UNION 
+           SELECT 'Average Joes' AS name, 75 AS low_limit, 149.99 AS high_limit
+           UNION 
+           SELECT 'Heavy Hitters' AS name, 150 AS low_limit, 9999999.99 AS high_limit) AS pymnt_grps
+           
+           ON pymnt.tot_payments BETWEEN pymnt_grps.low_limit AND pymnt_grps.high_limit
+           GROUP BY pymnt_grps.name")
+
+dbGetQuery(conn = conn_mysql,
+           statement = "SELECT actr.actor_id, grps.level FROM
+           (SELECT actor_id, count(*) num_roles FROM film_actor
+           GROUP BY actor_id
+           ) AS actr
+           INNER JOIN
+           (SELECT 'Hollywood Star' level, 30 AS min_roles, 99999 AS max_roles UNION ALL
+           SELECT 'Prolific Actor' level, 20 AS min_roles, 29 AS max_roles UNION ALL
+           SELECT 'Newcomer' level, 1 AS min_roles, 19 AS max_roles ) AS grps
+           ON actr.num_roles BETWEEN grps.min_roles AND grps.max_roles")
+
+```
+
+

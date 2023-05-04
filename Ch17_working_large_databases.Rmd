@@ -1,0 +1,217 @@
+---
+title: "Chapter 17: Working With Large Databases"
+header-includes:
+   - \usepackage{nccmath}
+   - \usepackage{caption}
+   - \usepackage{longtable}
+   - \usepackage{setspace}
+   - \usepackage{pdflscape}
+   - \usepackage{booktabs}
+   - \usepackage{longtable}
+   - \usepackage{array}
+   - \usepackage{multirow}
+   - \usepackage{wrapfig}
+   - \usepackage{float}
+   - \usepackage{colortbl}
+   - \usepackage{pdflscape}
+   - \usepackage{tabu}
+   - \usepackage{threeparttable}
+   - \usepackage{threeparttablex}
+   - \usepackage[normalem]{ulem}
+   - \usepackage{makecell}
+   - \usepackage{xcolor}
+   - \usepackage{amsthm}
+   - \newcommand{\blandscape}{\begin{landscape}}
+   - \newcommand{\elandscape}{\end{landscape}}
+   - \usepackage{upgreek}  #required for non-italicized Greek letters
+   - \usepackage{subcaption}
+   
+      #- \captionsetup[table]{textfont={it}, labelfont={bf}, singlelinecheck=false, labelsep=newline}
+   - \captionsetup[figure]{labelfont={normalfont, bf}, singlelinecheck=false, labelsep=newline}
+   
+   - \DeclareCaptionFont{figCaptionFont}{\fontfamily{phv}} #sets caption font to sans serif font of Helvetica 
+   - \DeclareCaptionFont{figCaptionSize}{\footnotesize} #set caption font size to footnote 
+   - \DeclareCaptionFont{figCaptionStyle}{\textup}  #set caption font to non-italicized font  
+   - \DeclareCaptionLabelSeparator{captionSep}{\newline\newline} #separates figure label and figure title with required white space
+   - \captionsetup[figure]{font = {figCaptionFont,figCaptionSize, figCaptionStyle}, labelsep = captionSep,  justification=justified}
+
+#setup for tables
+   - \captionsetup[table]{font = {figCaptionFont,figCaptionSize,figCaptionStyle}, labelfont={bf}, labelsep=captionSep, justification = raggedright, margin = {0cm,0cm}}
+   - \setlength\parindent{24pt}
+   
+format: "pandoc"
+output: pdf_document
+---
+
+```{r setup, include=F}
+knitr::opts_knit$set(root.dir = '~/Desktop/Datacamp/SQL')
+
+library(easypackages)
+packages_to_load <- c('tidyverse', 'RSQLite', 'dbplyr', 'DBI', 'odbc', 'RMySQL', 'reticulate', 'kableExtra', 'knitr', 'magick')
+packages(packages_to_load)
+
+reticulate::use_python(python = "/usr/local/msql/bin/")
+knitr::knit_engines$set(python.reticulate = FALSE)
+```
+
+```{r server_connection, echo=F}
+#set up connection with MySQL server; connect to meta data database
+conn_mysql <- dbConnect(drv = MySQL(), user = 'root', port = 3306, dbname = 'information_schema', password = 'tiramisu')
+
+dbGetQuery(conn = conn_mysql, statement = "USE sakila")
+#set up connection with SQLite server
+conn_sqlite <- dbConnect(RSQLite::SQLite(), 'professor_data/unitransparenz.sqlite')
+```
+
+# Chapter 17: Working with large datasets
+
+As organizations continue to accrue data, memory limits of relational databases are quickly exceeded and many of the following processing times become unbearably slow for many because
+the number of rows that must be examined becomes overwhelming:
+
+* full scans 
+* index creation/rebuilding
+* data archival/deletion 
+* generation of table/index statistics 
+* table relocation
+* database backups
+
+\noindent 
+One way to to allow users to efficiently query data is to divide data in any given table across several component tables or *partitions*. 
+
+## Partitioning concepts
+
+Although partitions largely resemble each other, several administrative features can differ between them (e.g., different compression schemes, local indexes can be dropped for some
+partitions, table statistics can be frozen on some partitions, individual partitions can be pinned into memory or stored in a database's flash storage tier).
+
+### Table partitioning
+
+Tables will commonly be partitioned by row and, when done so, need an indicator to determine partition that rows will be sent to. In most cases, a partition key is added as a column
+and a partitioning function is applied to this column to which partition each row is sent to. 
+
+### Index partitioning
+
+If a partitioned table has indices, then the index can be left as is (in which case it remains a *global index*) or be divided into local indexes. Global indexes are useful for q
+queries that do not require a full table scane (e.g., `SELECT sum(amount) FROM sales WHERE geo_region_cd = 'US'`). 
+
+### Partitioning methods
+#### Range partitioning
+
+Range partitioning is commonly used and divides data according to specified ranges of any column. For example, we could partition a table such that data from each month are
+partitioned into individual tables. The partitioning schema can be defined when creating the table, such as in the below example query that divides the `sales` table into six 
+partitions:
+
+```{r range_partition_creation, echo=F}
+#partition by week 
+dbGetQuery(conn = conn_mysql, statement = "CREATE TABLE sales
+         (sale_id INT NOT NULL,
+          cust_id INT NOT NULL,
+          store_id INT NOT NULL,
+          sale_date DATE NOT NULL,
+          amount DECIMAL(9,2)
+         )
+        PARTITION BY RANGE (yearweek(sale_date))
+         (PARTITION s1 VALUES LESS THAN (202002),
+          PARTITION s2 VALUES LESS THAN (202003),
+          PARTITION s3 VALUES LESS THAN (202004),
+          PARTITION s4 VALUES LESS THAN (202005),
+          PARTITION s5 VALUES LESS THAN (202006),
+          PARTITION s999 VALUES LESS THAN (MAXVALUE))")
+
+#partition by month 
+dbGetQuery(conn = conn_mysql, statement = "CREATE TABLE sales_month
+         (sale_id INT NOT NULL,
+          cust_id INT NOT NULL,
+          store_id INT NOT NULL,
+          sale_date DATE NOT NULL,
+          amount DECIMAL(9,2)
+         )
+        PARTITION BY RANGE (EXTRACT(year_month FROM sale_date))
+         (PARTITION s1 VALUES LESS THAN (200505),
+          PARTITION s2 VALUES LESS THAN (200506),
+          PARTITION s3 VALUES LESS THAN (200507),
+          PARTITION s4 VALUES LESS THAN (200508),
+          PARTITION s5 VALUES LESS THAN (200602), 
+          PARTITION s999 VALUES LESS THAN (MAXVALUE))")
+```
+
+\noindent
+The `partitions` table in the `information_schema` database can be queried to view metadata about partitions. 
+
+```{r view_partition_metadata, echo=F}
+dbGetQuery(conn = conn_mysql, statement = "SELECT *
+           FROM information_schema.partitions
+           WHERE table_name = 'sales' 
+           ORDER BY partition_ordinal_position")
+
+dbGetQuery(conn = conn_mysql, statement = "SELECT *
+           FROM information_schema.partitions
+           WHERE table_name = 'sales_month' 
+           ORDER BY partition_ordinal_position")
+```
+Because we do not want the last partition (`s999`) to become overwhelming large, modifications can be made to it after having created the table. 
+
+```{r reorganize_partition, echo=F}
+dbGetQuery(conn = conn_mysql, statement = "ALTER TABLE sales 
+         REORGANIZE PARTITION s999 INTO 
+         (PARTITION s6 VALUES LESS THAN (202007), 
+         PARTITION s7 VALUES LESS THAN (202008),
+         PARTITION s999 VALUES LESS THAN (MAXVALUE))")
+```
+
+### List partitioning 
+
+Tables can also be partitioned by specify string values. For example, if a table has a column that contains the region, partitions can be created according to sets of regions. The query
+below partitions tables according to North America, Asia, and Europe. 
+
+```{r query_example, echo=F}
+dbGetQuery(conn = conn_mysql, statement = "CREATE TABLE sales
+         (sale_id INT NOT NULL,
+          cust_id INT NOT NULL,
+          store_id INT NOT NULL,
+          sale_date DATE NOT NULL,
+          amount DECIMAL(9,2)
+         )
+         PARTITION BY LIST COLUMNS (geo_region_cd)
+            (PARTITION NORTHAMERICA VALUES IN ('US_NE','US_SE','US_MW','US_NW','US_SW','CAN','MEX'), 
+            PARTITION EUROPE VALUES IN ('EUR_E','EUR_W'),
+            PARTITION ASIA VALUES IN ('CHN','JPN','IND'))")
+
+#forgot to add geo_region_cd column 
+ bGetQuery(conn = conn_mysql, statement = "ALTER TABLE sales
+                     ADD geo_region_cd VARCHAR(6) NOT NULL")
+ 
+ #need to redefine the partitions because they did not register on the first try (geo_region_cd) column not defined
+ dbGetQuery(conn = conn_mysql, statement = "ALTER TABLE sales 
+         PARTITION BY LIST COLUMNS (geo_region_cd)
+            (PARTITION NORTHAMERICA VALUES IN ('US_NE','US_SE','US_MW','US_NW','US_SW','CAN','MEX'), 
+            PARTITION EUROPE VALUES IN ('EUR_E','EUR_W'),
+            PARTITION ASIA VALUES IN ('CHN','JPN','IND'))")
+
+```
+
+Note that MySQL will return an error if rows are inserted with country values not contained within the partition definitions. To allow new values to be stored in the partitions, the partition has to be reorganized. 
+
+```{r partition_reorganization, echo=F}
+dbGetQuery(conn = conn_mysql, statement = "INSERT INTO sales
+            VALUES
+           (1, 1, 1, '2020-01-18', 2765.15, 'US_NE'), 
+           (3, 6, 27, '2020-03-11', 4267.12, 'KOR')")
+```
+
+### Hash partitioning 
+
+Divides table into desired number of partitions that are of equal size. When rows are added to the table, they will be evenly distributed across the partitions. 
+
+### Composite partitioning
+
+Divided tables into partitions and subpartitions. 
+
+## Clustering
+
+Partitioning has several advantages. Data can quickly be searched and joined because queries only have to interact with a few number of partitions. Additionally, administrator can 
+easily manage data. However, if a database base has hundreds of users, the database system will likely not have enough CPU, memory, or bandwith. One solution is to let multiple servers
+act as a database. One such strategy is a shared-disk/shared-cache configuration where each server has access to all data on each server (Oracle is the leader in clustering databases).
+
+## Sharding
+
+Applies partitining to databases. Sharding is basically not used anymore because of the time-intensive maintenance required. 

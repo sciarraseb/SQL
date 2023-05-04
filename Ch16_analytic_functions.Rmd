@@ -1,0 +1,314 @@
+---
+title: "Chapter 16: Analytic functions"
+header-includes:
+   - \usepackage{nccmath}
+   - \usepackage{caption}
+   - \usepackage{longtable}
+   - \usepackage{setspace}
+   - \usepackage{pdflscape}
+   - \usepackage{booktabs}
+   - \usepackage{longtable}
+   - \usepackage{array}
+   - \usepackage{multirow}
+   - \usepackage{wrapfig}
+   - \usepackage{float}
+   - \usepackage{colortbl}
+   - \usepackage{pdflscape}
+   - \usepackage{tabu}
+   - \usepackage{threeparttable}
+   - \usepackage{threeparttablex}
+   - \usepackage[normalem]{ulem}
+   - \usepackage{makecell}
+   - \usepackage{xcolor}
+   - \usepackage{amsthm}
+   - \newcommand{\blandscape}{\begin{landscape}}
+   - \newcommand{\elandscape}{\end{landscape}}
+   - \usepackage{upgreek}  #required for non-italicized Greek letters
+   - \usepackage{subcaption}
+   
+      #- \captionsetup[table]{textfont={it}, labelfont={bf}, singlelinecheck=false, labelsep=newline}
+   - \captionsetup[figure]{labelfont={normalfont, bf}, singlelinecheck=false, labelsep=newline}
+   
+   - \DeclareCaptionFont{figCaptionFont}{\fontfamily{phv}} #sets caption font to sans serif font of Helvetica 
+   - \DeclareCaptionFont{figCaptionSize}{\footnotesize} #set caption font size to footnote 
+   - \DeclareCaptionFont{figCaptionStyle}{\textup}  #set caption font to non-italicized font  
+   - \DeclareCaptionLabelSeparator{captionSep}{\newline\newline} #separates figure label and figure title with required white space
+   - \captionsetup[figure]{font = {figCaptionFont,figCaptionSize, figCaptionStyle}, labelsep = captionSep,  justification=justified}
+
+#setup for tables
+   - \captionsetup[table]{font = {figCaptionFont,figCaptionSize,figCaptionStyle}, labelfont={bf}, labelsep=captionSep, justification = raggedright, margin = {0cm,0cm}}
+   - \setlength\parindent{24pt}
+   
+format: "pandoc"
+output: pdf_document
+---
+
+```{r setup, include=F}
+knitr::opts_knit$set(root.dir = '~/Desktop/Datacamp/SQL')
+
+library(easypackages)
+packages_to_load <- c('tidyverse', 'RSQLite', 'dbplyr', 'DBI', 'odbc', 'RMySQL', 'reticulate', 'kableExtra', 'knitr', 'magick')
+packages(packages_to_load)
+
+reticulate::use_python(python = "/usr/local/msql/bin/")
+knitr::knit_engines$set(python.reticulate = FALSE)
+```
+
+```{r server_connection, echo=F}
+#set up connection with MySQL server; connect to meta data database
+conn_mysql <- dbConnect(drv = MySQL(), user = 'root', port = 3306, dbname = 'information_schema', password = 'tiramisu')
+
+dbGetQuery(conn = conn_mysql, statement = "USE sakila")
+#set up connection with SQLite server
+conn_sqlite <- dbConnect(RSQLite::SQLite(), 'professor_data/unitransparenz.sqlite')
+```
+
+# Chapter 16: Analytic functions
+
+Analytic functions are useful for summarizing data. The queries below show several examples of analytic functions. 
+
+```{r analytic_function_examples, echo=F}
+dbGetQuery(conn = conn_mysql, statement = 
+           "SELECT quarter(payment_date) AS quarter, 
+           monthname(payment_date) AS month, 
+           sum(amount) AS monthly_sales
+           FROM payment
+           WHERE year(payment_date) = 2005
+           GROUP BY quarter, month")
+
+#this query gets the monthlyrevenue and also includes the max revenue in each quarter and over the four-month period
+dbGetQuery(conn = conn_mysql, statement = 
+           "SELECT quarter(payment_date) AS quarter, 
+           monthname(payment_date) AS month, 
+           sum(amount) AS monthly_sales, 
+           max(sum(amount)) over() AS max_overall_sales, 
+           max(sum(amount)) over(partition by quarter(payment_date)) AS max_qrtr_sales
+           FROM payment
+           WHERE year(payment_date) = 2005
+           GROUP BY quarter, month")
+
+#make a column for the rank order using rank()
+dbGetQuery(conn = conn_mysql, statement = 
+           "SELECT quarter(payment_date) AS quarter, 
+           monthname(payment_date) AS month, 
+           sum(amount) AS monthly_sales, 
+           rank() over (order by sum(amount) desc) AS sales_rank
+           FROM payment
+           WHERE year(payment_date) = 2005
+           GROUP BY quarter, month
+           ORDER BY quarter, monthname(payment_date)
+           ")
+
+#create rank to be based on the quarter; SQL commands rank amounts of each month within each quarter 
+dbGetQuery(conn = conn_mysql, statement = 
+           "SELECT quarter(payment_date) AS quarter, 
+           monthname(payment_date) AS month, 
+           sum(amount) AS monthly_sales, 
+           rank() over (partition by quarter(payment_date)
+               order by sum(amount) desc) AS qrtr_rank
+           FROM payment
+           WHERE year(payment_date) = 2005
+           GROUP BY quarter, month
+           ORDER BY quarter, monthname(payment_date)
+           ")
+
+```
+
+## Ranking 
+### Ranking functions
+
+* `row_number()` returns a unique number for each row. 
+* `rank` returns the same ranking in case of a tie, with gaps in the rankings (next rank is the second-next integer value).
+* `dense_rank` returns the same ranking in case of tie, with no gaps in the rankings (meaning the next rank is the next integer value). 
+
+The query below counts the number of rentals for each customer, the customer's rank (in addition to the two types of ranks). 
+
+```{r SQL_rank, echo=F}
+#select top 10 customers based on number of rentals
+dbGetQuery(conn = conn_mysql, statement = "
+           SELECT customer_id, count(*) AS num_rentals, 
+           row_number() over (order by count(*) desc) AS row_num_rank, 
+           dense_rank() over (order by count(*) desc) AS dense_rnk
+           FROM rental 
+           GROUP BY customer_id
+           LIMIT 10")
+
+#rank customers based on total amount of money spent in each month. Use `partition by` to rank customers within each month. 
+dbGetQuery(conn = conn_mysql, statement = " 
+           SELECT c.first_name, c.last_name, monthname(payment_date) AS month,
+           sum(p.amount) AS tot_pymt, 
+           rank() over(partition by monthname(payment_date)
+               order by sum(p.amount) desc) AS rank_rev
+           FROM customer AS c 
+            INNER JOIN payment AS p
+            ON c.customer_id = p.customer_id 
+           GROUP BY c.customer_id, monthname(payment_date) 
+           ")
+
+#to select the top 5customers of each month, we need to nest the ranking in a subquery  
+dbGetQuery(conn = conn_mysql, statement = " 
+           SELECT first_name, last_name, month, tot_pymt, rank_rev
+           FROM 
+           
+               (SELECT c.first_name, c.last_name, monthname(payment_date) AS month, 
+               sum(p.amount) AS tot_pymt, 
+               rank() over(partition by monthname(payment_date)
+               order by sum(p.amount) desc) AS rank_rev
+               FROM customer AS c
+                  INNER JOIN payment AS p
+                  ON c.customer_id = p.customer_id
+               GROUP BY p.customer_id,  monthname(payment_date)) cust_rank
+          WHERE rank_rev <=5 
+           ")
+
+dbGetQuery(conn = conn_mysql, statement = "SELECT DISTINCT monthname(rental_date) FROM rental")
+```
+
+## Reporting functions
+
+Aggregate functions can be used with `over` to calculate descriptive statistics for certain groups/ranges of time. The query below calculates the total revenue for each month.  
+
+```{r reporting_functions, echo=F}
+dbGetQuery(conn = conn_mysql, statement = "SELECT sum(amount) AS tot_revenue, monthname(payment_date) AS month
+           FROM payment 
+           GROUp BY month")
+
+#return payment_month, monthly_total, & grand_total for payments above 10$, first_name, last_name (uses subquery)
+dbGetQuery(conn = conn_mysql, statement = "SELECT first_name, last_name, amount, month, monthly_total, grand_total
+           FROM 
+               (SELECT c.first_name, c.last_name, p.amount,
+               monthname(p.payment_date) AS month,
+               sum(p.amount) over (partition by monthname(p.payment_date)) AS monthly_total, 
+               sum(p.amount) over() AS grand_total
+               FROM payment AS p
+                  INNER JOIN customer AS c
+                  ON p.customer_id = c.customer_id
+               WHERE amount >= 10) AS monthly_info")
+
+#does not use subquery 
+dbGetQuery(conn = conn_mysql, statement = "SELECT c.first_name, c.last_name, p.amount,
+               monthname(p.payment_date) AS month,
+               sum(p.amount) over (partition by monthname(p.payment_date)) AS monthly_total, 
+               sum(p.amount) over() AS grand_total
+               FROM payment AS p
+                  INNER JOIN customer AS c
+                  ON p.customer_id = c.customer_id
+               WHERE amount >= 10")
+
+#return table with total monthly sales and percentage of total sales for each month
+dbGetQuery(conn = conn_mysql, statement = "SELECT monthname(payment_date) AS month, 
+           sum(amount) AS monthly_revenue,
+           round(sum(amount)/sum(sum(amount)) *100, 2) AS pct_total
+           FROM payment
+           GROUP BY monthname(payment_date)")
+
+#reporting with a descriptor column (month, monthly revenue, descriptor)
+dbGetQuery(conn = conn_mysql, statement = "SELECT monthname(payment_date) AS month, 
+           sum(amount) AS monthly_revenue,
+           CASE sum(amount) 
+               WHEN max(sum(amount)) over() THEN 'Highest'
+               WHEN min(sum(amount)) over() THEN 'Lowest'
+               ELSE 'Middle'
+           END AS descriptor
+           FROM payment 
+           GROUP BY monthname(payment_date)")
+```
+
+### Window frames
+
+Queries can also be equipped to calculate functions over desired periods of time. For example, the query below computes the rolling sum across each month. 
+
+```{r window_frames, echo=F}
+dbGetQuery(conn = conn_mysql, statement = "SELECT yearweek(payment_date) AS month, 
+                  sum(amount) AS month_total, 
+                  sum(sum(amount)) over (rows unbounded preceding) AS rolling_sum 
+                  FROM payment
+                  GROUP BY yearweek(payment_date)
+           ")
+
+#calculate rolling average over a three-week period 
+dbGetQuery(conn = conn_mysql, statement = "SELECT yearweek(payment_date) AS week, 
+           sum(amount) AS month_total, 
+           avg(sum(amount)) over (rows between 1 preceding and 1 following) AS 3_wk_avg
+           FROM payment
+           GROUP BY week")
+
+#calculate rolling weekly average. Note that range can be used to specify a date interval. Note that ORDER BY must be used with range. 
+dbGetQuery(conn = conn_mysql, statement = "SELECT date(payment_date) AS date, 
+           sum(amount), 
+           avg(sum(amount)) over (order by date(payment_date) 
+               range between interval 3 day preceding and interval 3 day following) AS week_rolling_avg
+           FROM payment 
+           GROUP BY date")
+```
+
+### Lag and lead
+
+Queries can also compare values from previous rows. The query below calculates the revenue each week and the percentage difference from the week before. The `lag` keyword is used to 
+calculate the revenue from the previous week and the `lead` keyword is used to calculate the revenue from the coming week. 
+
+```{r lag_lead, echo=F}
+#calculates weekly_revenue, revenue from previous and coming weeks
+dbGetQuery(conn = conn_mysql, statement = "SELECT yearweek(payment_date) AS week, 
+           sum(amount) AS weekly_revenue, 
+           lag(sum(amount), 1) over(order by yearweek(payment_date)) AS prev_wk_total, 
+           lead(sum(amount), 1) over(order by yearweek(payment_date)) AS next_wk_total
+           FROM payment 
+           GROUP BY yearweek(payment_date)")
+
+#calculates weekly revenue and percentage change from previous week 
+dbGetQuery(conn = conn_mysql, statement = "SELECT yearweek(payment_date) AS week, 
+           sum(amount) AS weekly_revenue, 
+           round(sum(amount)/lag(sum(amount), 1) over(order by yearweek(payment_date))*100, 2) AS pct_change
+           FROM payment 
+           GROUP BY yearweek(payment_date)
+           ORDER BY 1")
+
+#calculates weekly revenue and percentage difference from previous week 
+dbGetQuery(conn = conn_mysql, statement = "SELECT yearweek(payment_date) AS week, 
+           sum(amount) AS weekly_revenue, 
+           round((sum(amount) - lag(sum(amount), 1) over (order by yearweek(payment_date)))/
+               lag(sum(amount), 1) over(order by yearweek(payment_date))*100, 2) AS pct_difference
+           FROM payment 
+           GROUP BY yearweek(payment_date)
+           ORDER BY 1")
+```
+
+### Column value concatenation
+
+The `group_concat` function works a bit like `pivot_wider()` in that in converts a set of columns to a wide format. For example, the query below returns a the set of films with only
+4 actors and the actor names. 
+
+```{r column_value_concatenation, echo=F}
+dbGetQuery(conn = conn_mysql, statement = "SELECT f.title, 
+           group_concat(a.last_name, a.first_name order by a.last_name separator ',') AS actors
+           FROM actor AS a 
+            INNER JOIN film_actor AS fa
+            ON a.actor_id = fa.actor_id
+            INNER JOIN film AS f
+            ON fa.film_id = f.film_id
+          GROUP BY f.title
+          HAVING count(*) = 4;")
+```
+
+## Exercises
+
+```{sql chapter_16_exercises, echo=F}
+--write a query that retrieves every row from Sales_Fact, and add a column to generate a ranking based on the tot_sales column values. The highest value should receive a ranking of 1, and the lowest a ranking of 24.
+
+SELECT year_no, month_no, tot_sales, 
+   rank() over(order by tot_sales desc)
+   FROM Sales_Fact
+   
+--Modify the query from the previous exercise to generate two sets of rankings from 1 to 12, one for 2019 data and one for 2020.
+SELECT year_no, month_no, tot_sales, 
+   rank() over(partition by year_no order by tot_sales desc)
+   FROM Sales_Fact
+   
+--Write a query that retrieves all 2020 data, and include a column that will contain the tot_sales value from the previous month.
+SELECT year_no, month_no, tot_sales, 
+   lag(tot_sales, 1) over(order by month_no) AS prev_month_sales
+   FROM Sales_Fact
+   WHERE year_no = '2020'
+```
+

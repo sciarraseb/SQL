@@ -1,0 +1,212 @@
+---
+title: "Chapter 10: Join Revisited"
+header-includes:
+   - \usepackage{nccmath}
+   - \usepackage{caption}
+   - \usepackage{longtable}
+   - \usepackage{setspace}
+   - \usepackage{pdflscape}
+   - \usepackage{booktabs}
+   - \usepackage{longtable}
+   - \usepackage{array}
+   - \usepackage{multirow}
+   - \usepackage{wrapfig}
+   - \usepackage{float}
+   - \usepackage{colortbl}
+   - \usepackage{pdflscape}
+   - \usepackage{tabu}
+   - \usepackage{threeparttable}
+   - \usepackage{threeparttablex}
+   - \usepackage[normalem]{ulem}
+   - \usepackage{makecell}
+   - \usepackage{xcolor}
+   - \usepackage{amsthm}
+   - \newcommand{\blandscape}{\begin{landscape}}
+   - \newcommand{\elandscape}{\end{landscape}}
+   - \usepackage{upgreek}  #required for non-italicized Greek letters
+   - \usepackage{subcaption}
+   
+      #- \captionsetup[table]{textfont={it}, labelfont={bf}, singlelinecheck=false, labelsep=newline}
+   - \captionsetup[figure]{labelfont={normalfont, bf}, singlelinecheck=false, labelsep=newline}
+   
+   - \DeclareCaptionFont{figCaptionFont}{\fontfamily{phv}} #sets caption font to sans serif font of Helvetica 
+   - \DeclareCaptionFont{figCaptionSize}{\footnotesize} #set caption font size to footnote 
+   - \DeclareCaptionFont{figCaptionStyle}{\textup}  #set caption font to non-italicized font  
+   - \DeclareCaptionLabelSeparator{captionSep}{\newline\newline} #separates figure label and figure title with required white space
+   - \captionsetup[figure]{font = {figCaptionFont,figCaptionSize, figCaptionStyle}, labelsep = captionSep,  justification=justified}
+
+#setup for tables
+   - \captionsetup[table]{font = {figCaptionFont,figCaptionSize,figCaptionStyle}, labelfont={bf}, labelsep=captionSep, justification = raggedright, margin = {0cm,0cm}}
+   - \setlength\parindent{24pt}
+   
+format: "pandoc"
+output: pdf_document
+---
+
+```{r setup, include=F}
+knitr::opts_knit$set(root.dir = '~/Desktop/Datacamp/SQL')
+
+library(easypackages)
+packages_to_load <- c('tidyverse', 'RSQLite', 'dbplyr', 'DBI', 'odbc', 'RMySQL', 'reticulate', 'kableExtra', 'knitr', 'magick')
+packages(packages_to_load)
+
+reticulate::use_python(python = "/usr/local/msql/bin/")
+knitr::knit_engines$set(python.reticulate = FALSE)
+```
+
+```{r server_connection, echo=F}
+#set up connection with MySQL server; connect to meta data database
+conn_mysql <- dbConnect(drv = MySQL(), user = 'root', port = 3306, dbname = 'information_schema', password = 'tiramisu')
+
+dbGetQuery(conn = conn_mysql, statement = "USE sakila")
+#set up connection with SQLite server
+conn_sqlite <- dbConnect(RSQLite::SQLite(), 'professor_data/unitransparenz.sqlite')
+```
+
+# Chapter 10: Joins revisited 
+
+```{r inner_join_limit, echo=F}
+#inner joins only return data for observations that exist in the joined data sets. For example, notice that 42 movies do not have any inventory information. 
+dbListFields(conn = conn_mysql, name = 'inventory')
+dbGetQuery(conn = conn_mysql, statement = "SELECT f.film_id, f.title, count(*) AS num_copies 
+           FROM film AS f
+           INNER JOIN inventory AS i
+           ON f.film_id = i.film_id
+           GROUP BY f.film_id, f.title")
+
+#to return the number of copies for all movies, use the outer join. In this query, all the rows of the film data set are returned. Note that the calculation for num_copies
+#has also been changed so that it is calculated by summing the number of times each inventory_id appears for each movie. If num_copies would be left as count(*), then null values would
+#appear as 1 because they all appear in the film data set.
+dbGetQuery(conn = conn_mysql, statement = "SELECT f.film_id, f.title,count(i.inventory_id) AS num_copies 
+           FROM film AS f
+           LEFT OUTER JOIN inventory AS i
+           ON f.film_id = i.film_id
+           GROUP BY f.film_id, f.title")
+
+#the following two queries provide under-the-hood look for why num_copies returns as 0
+dbGetQuery(conn = conn_mysql, statement = "SELECT f.film_id, f.title, i.inventory_id 
+           FROM film AS f
+           INNER JOIN inventory AS i
+           ON f.film_id = i.film_id
+           HAVING film_id 
+           BETWEEN 13 AND 15")
+
+dbGetQuery(conn = conn_mysql, statement = "SELECT f.film_id, f.title, i.inventory_id 
+           FROM film AS f
+           LEFT OUTER JOIN inventory AS i
+           ON f.film_id = i.film_id
+           HAVING film_id 
+           BETWEEN 13 AND 15")
+
+```
+
+### Three-way outer joins
+
+```{r three_outer_join, echo=T}
+#the query below joins three data sets, with the rental data of each movie rental being extracted
+dbListFields(conn = conn_mysql, name = 'rental')
+dbGetQuery(conn = conn_mysql, statement = "SELECT COUNT(*) FROM film")
+dbGetQuery(conn = conn_mysql, statement = "SELECT f.film_id, f.title, i.inventory_id, r.rental_date
+           FROM film AS f
+           LEFT OUTER JOIN inventory AS i
+           ON f.film_id = i.film_id
+           LEFT OUTER JOIN rental AS r
+           ON i.inventory_id = r.inventory_id
+           WHERE f.film_id BETWEEN 13 AND 15")
+```
+
+## Cross joins 
+
+Cross joins return all possible combinations of the selected variables. 
+
+```{r cross_join, echo=F}
+dbGetQuery(conn = conn_mysql, statement = "SELECT c.name AS category_name, l.name AS language
+           FROM category AS c
+           CROSS JOIN language l")
+```
+
+Cross joins can be used to efficiently create tables with categories not directly calculated from the data. The query below implements a cross join to create a table where the number of
+rentals on each day of 2020 is returned. The `DATE_ADD()` function is used to convert the numbers to day in the year 2020. 
+
+```{r cross_join_ex, echo=F}
+dbListFields(conn = conn_mysql, name = 'rental')
+dbGetQuery(conn = conn_mysql, statement = "SELECT date(rental_date) FROM rental LIMIT 5")
+dbGetQuery(conn = conn_mysql, statement = "SELECT days.date, COUNT(r.rental_id) AS num_rentals
+           FROM rental AS r
+           RIGHT OUTER JOIN
+           (SELECT DATE_ADD('2005-01-01', INTERVAL(ones.num + tens.num + hundreds.num) day) AS date
+           FROM
+           (SELECT 0 num UNION ALL
+           SELECT 1 num UNION ALL
+           SELECT 2 num UNION ALL
+           SELECT 3 num UNION ALL
+           SELECT 4 num UNION ALL
+           SELECT 5 num UNION ALL
+           SELECT 6 num UNION ALL
+           SELECT 7 num UNION ALL
+           SELECT 8 num UNION ALL
+           SELECT 9 num) ones
+           CROSS JOIN
+           (SELECT 0 num UNION ALL
+           SELECT 10 num UNION ALL
+           SELECT 20 num UNION ALL
+           SELECT 30 num UNION ALL
+           SELECT 40 num UNION ALL
+           SELECT 50 num UNION ALL
+           SELECT 60 num UNION ALL
+           SELECT 70 num UNION ALL
+           SELECT 80 num UNION ALL
+           SELECT 90 num) tens
+           CROSS JOIN
+           (SELECT 0 num UNION ALL
+           SELECT 100 num UNION ALL
+           SELECT 200 num UNION ALL
+           SELECT 300 num) hundreds
+           HAVING date < '2006-01-01'
+           ORDER BY date) AS days
+           ON days.date = date(r.rental_date)
+           GROUP BY days.date")
+```
+
+```{r chapter_10_exercises, echo=F}
+#calculate the total amount of money spent by each customer 
+dbListFields(conn = conn_mysql,name = 'payment')
+dbGetQuery(conn = conn_mysql, statement = "SELECT c.customer_id, c.first_name, c.last_name, SUM(p.amount) AS total_spent
+FROM customer AS c
+LEFT OUTER JOIN payment AS p
+ON c.customer_id = p.customer_id
+GROUP BY c.customer_id")
+
+#same query using right outer join 
+dbGetQuery(conn = conn_mysql, statement = "SELECT c.customer_id, c.first_name, c.last_name, SUM(amount) AS total_spent
+FROM customer AS c
+RIGHT OUTER JOIN payment AS p
+ON c.customer_id = .customer_id
+GROUP BY c.customer_id")
+
+#generate set that shows the number of customers in each spending bracket of 0-50, 50-100, 100-200, 200+
+dbGetQuery(conn = conn_mysql,
+           statement = "SELECT pymnt_grps.name, count(*) AS num_customers, 
+           sum(pymnt.num_rentals)/count(*) AS avg_num_cust_transactions, 
+           sum(pymnt.num_rentals) AS number_cat_rentals,
+           avg(pymnt.tot_payments) AS avg_cust_revenue
+           
+           FROM (SELECT customer_id,
+           count(*) AS num_rentals, sum(amount) AS tot_payments
+           FROM payment
+           GROUP BY customer_id) AS pymnt
+           INNER JOIN 
+           
+           (SELECT 'Small Fry' AS name, 0 AS low_limit, 74.99 AS high_limit 
+           UNION 
+           SELECT 'Average Joes' AS name, 75 AS low_limit, 149.99 AS high_limit
+           UNION 
+           SELECT 'Heavy Hitters' AS name, 150 AS low_limit, 9999999.99 AS high_limit) AS pymnt_grps
+           
+           ON pymnt.tot_payments BETWEEN pymnt_grps.low_limit AND pymnt_grps.high_limit
+           GROUP BY pymnt_grps.name")
+
+```
+
+
+

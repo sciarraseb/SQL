@@ -1,0 +1,258 @@
+---
+title: "Chapter 5: Querying Multiple Tables"
+header-includes:
+   - \usepackage{nccmath}
+   - \usepackage{caption}
+   - \usepackage{longtable}
+   - \usepackage{setspace}
+   - \usepackage{pdflscape}
+   - \usepackage{booktabs}
+   - \usepackage{longtable}
+   - \usepackage{array}
+   - \usepackage{multirow}
+   - \usepackage{wrapfig}
+   - \usepackage{float}
+   - \usepackage{colortbl}
+   - \usepackage{pdflscape}
+   - \usepackage{tabu}
+   - \usepackage{threeparttable}
+   - \usepackage{threeparttablex}
+   - \usepackage[normalem]{ulem}
+   - \usepackage{makecell}
+   - \usepackage{xcolor}
+   - \usepackage{amsthm}
+   - \newcommand{\blandscape}{\begin{landscape}}
+   - \newcommand{\elandscape}{\end{landscape}}
+   - \usepackage{upgreek}  #required for non-italicized Greek letters
+   - \usepackage{subcaption}
+   
+      #- \captionsetup[table]{textfont={it}, labelfont={bf}, singlelinecheck=false, labelsep=newline}
+   - \captionsetup[figure]{labelfont={normalfont, bf}, singlelinecheck=false, labelsep=newline}
+   
+   - \DeclareCaptionFont{figCaptionFont}{\fontfamily{phv}} #sets caption font to sans serif font of Helvetica 
+   - \DeclareCaptionFont{figCaptionSize}{\footnotesize} #set caption font size to footnote 
+   - \DeclareCaptionFont{figCaptionStyle}{\textup}  #set caption font to non-italicized font  
+   - \DeclareCaptionLabelSeparator{captionSep}{\newline\newline} #separates figure label and figure title with required white space
+   - \captionsetup[figure]{font = {figCaptionFont,figCaptionSize, figCaptionStyle}, labelsep = captionSep,  justification=justified}
+
+#setup for tables
+   - \captionsetup[table]{font = {figCaptionFont,figCaptionSize,figCaptionStyle}, labelfont={bf}, labelsep=captionSep, justification = raggedright, margin = {0cm,0cm}}
+   - \setlength\parindent{24pt}
+   
+format: "pandoc"
+output: pdf_document
+---
+
+```{r setup, include=F}
+knitr::opts_knit$set(root.dir = '~/Desktop/Datacamp/SQL')
+
+library(easypackages)
+packages_to_load <- c('tidyverse', 'RSQLite', 'dbplyr', 'DBI', 'odbc', 'RMySQL', 'reticulate', 'kableExtra', 'knitr', 'magick')
+packages(packages_to_load)
+
+reticulate::use_python(python = "/usr/local/msql/bin/")
+knitr::knit_engines$set(python.reticulate = FALSE)
+```
+
+```{r server_connection, echo=F}
+#set up connection with MySQL server; connect to meta data database
+conn_mysql <- dbConnect(drv = MySQL(), user = 'root', port = 3306, dbname = 'information_schema', password = 'tiramisu')
+
+dbGetQuery(conn = conn_mysql, statement = "USE sakila")
+#set up connection with SQLite server
+conn_sqlite <- dbConnect(RSQLite::SQLite(), 'professor_data/unitransparenz.sqlite')
+```
+
+
+# Chapter 5: Querying multiple tables 
+## Inner joins
+
+When querying data, information is often obtained from multiple tables using the `JOIN` and `ON` clauses. The query below obtains the names and addresses of all customers by finding
+cases where rows in the `customer` and `address` tables have the same addresses. Note that, although the MySQL server computes inner joins by default, it is good practice to specify the
+type of join. Although the below inner join can also be accomplished using the `WHERE` clause, this method is not portable across servers and loses clarity when more than two tables are
+queried. Additionally, the second join method is not clear on the type of join being used. 
+
+```{r, inner_join, echo=F}
+multi_table_join_1 <- dbGetQuery(conn = conn_mysql, 
+           statement = "SELECT c.first_name, c.last_name, a.address
+           FROM customer AS c
+           INNER JOIN address AS a 
+           ON c.address_id = a.address_id")
+
+multi_table_join_2 <- dbGetQuery(conn = conn_mysql, 
+           statement = "SELECT c.first_name, c.last_name, a.address
+           FROM customer AS c, address AS a
+           WHERE c.address_id = a.address_id")
+
+multi_table_join_3 <- dbGetQuery(conn = conn_mysql, 
+           statement = "SELECT c.first_name, c.last_name, a.address
+           FROM customer AS c 
+           INNER JOIN address AS a
+           ON c.address_id = a.address_id
+           WHERE a.postal_code = 52137")
+
+all_equal(multi_table_join_1, multi_table_join_2, multi_table_join_3)
+
+dbGetQuery(conn = conn_mysql, 
+           statement = "SELECT c.first_name, c.last_name, a.address
+           FROM customer AS c
+           INNER JOIN address AS a 
+           ON c.address_id = a.address_id")
+```
+
+### Joining three of more tables
+
+We need two specify two join types and use two `ON` subclauses when joining three tables. A three-table query is needed to obtain the city in which each customer resides. The `address_id`
+foreign key column is first needed to traverse from the `customer` to the `address` table, at which point the `city_id` foreign key is used to traverse from the `address` table to the 
+`city` table. Note that this query can be achieved using any of the following three queries. In each query, it is best to conceptualize the query as cutting the result set each time 
+an inner join is computed. 
+
+```{r three_join_query, echo=F}
+#first: querying customer --> address --> city 
+dbListFields(conn = conn_mysql, name = 'city')
+straight_join_1 <- dbGetQuery(conn = conn_mysql, 
+           statement = "SELECT cust.first_name, cust.last_name, a.address, c.city
+           FROM customer AS cust
+           INNER JOIN address AS a
+           ON cust.address_id = a.address_id
+           INNER JOIN city AS c
+           ON a.city_id = c.city_id")
+
+#second: querying city --> address --> customer
+straight_join_2 <- dbGetQuery(conn = conn_mysql, 
+           statement = "SELECT cust.first_name, cust.last_name, a.address, c.city
+           FROM city AS c
+           INNER JOIN address AS a
+           ON a.city_id = c.city_id
+           INNER JOIN customer AS cust
+           ON cust.address_id = a.address_id")
+
+#third: querying address --> city --> customer 
+straight_join_3 <- dbGetQuery(conn = conn_mysql, 
+           statement = "SELECT cust.first_name, cust.last_name, a.address, c.city
+           FROM address AS a
+           INNER JOIN city AS c
+           ON a.city_id = c.city_id 
+           INNER JOIN customer AS cust
+           ON a.address_id = cust.address_id")
+
+all_equal(straight_join_1, straight_join_2, straight_join_3) #TRUE 
+```
+
+\noindent
+Each of the above queries return the same result set because SQL is a nonprocedural language: That is, SQL determines how to best execute the query. The MySQL server determines the 
+driving table using statistics in the `sakila` database and then determines the order in which to determine the remaining tables. Note that the `STRAIGHT_JOIN` keyword can be used
+if you want to ensure the joins follow a particular order (note that, in any of the above cases, forcing the join to follow by nominal order produces the same result set).
+
+```{r straight_join, echo=F}
+#customer --> address --> city 
+dbGetQuery(conn = conn_mysql, 
+           statement = " SELECT STRAIGHT_JOIN cust.first_name, cust.last_name, c.city 
+           FROM customer AS cust
+           INNER JOIN address AS a
+           ON cust.address_id = a.address_id
+           INNER JOIN city AS c
+           ON a.city_id = c.city_id")
+
+#querying city --> address --> customer
+dbGetQuery(conn = conn_mysql, 
+           statement = " SELECT STRAIGHT_JOIN cust.first_name, cust.last_name, c.city 
+           FROM city AS c
+           INNER JOIN address AS a
+           ON c.city_id = a.city_id
+           INNER JOIN customer AS cust
+           ON a.address_id = c.address_id")
+
+#third: querying address --> city --> customer 
+
+
+
+
+```
+
+### Using the same table twice
+
+The query below finds all films in which either the actors Cate McQueen or Cuba Birch appeared. The result set will include the actor's name (`first_name`, `last_name`) and the film name
+(`title`). The second query finds the films in which both actors appeared. 
+
+```{r query_same_table, echo=F}
+dbGetQuery(conn = conn_mysql, 
+           statement = "SELECT a.first_name, a.last_name, f.title
+           FROM film AS f
+           INNER JOIN film_actor AS fa
+           ON f.film_id = fa.film_id
+           INNER JOIN actor AS a
+           ON fa.actor_id = a.actor_id
+           WHERE (a.first_name = 'Cate' AND a.last_name = 'McQueen') OR 
+           (a.first_name = 'Cuba' AND a.last_name = 'Birch')
+           LIMIT 10")
+
+#find films in which both actors appear 
+dbGetQuery(conn = conn_mysql, 
+           statement = "SELECT f.title, a1.first_name, a1.last_name, a2.first_name, a2.last_name
+           FROM film AS f
+           INNER JOIN film_actor AS fa1
+           ON f.film_id = fa1.film_id
+           INNER JOIN actor AS a1
+           ON fa1.actor_id = a1.actor_id
+           INNER JOIN film_actor AS fa2
+           ON f.film_id = fa2.film_id
+           INNER JOIN actor AS a2
+           ON fa2.actor_id = a2.actor_id
+           WHERE (a1.first_name = 'CATE' AND a1.last_name = 'MCQUEEN')
+           AND (a2.first_name = 'CUBA' AND a2.last_name = 'BIRCH')")
+```
+
+## Self joins
+
+```{r self_join, echo=F}
+dbGetQuery(conn = conn_mysql, 
+           statement = "DESC film")
+
+```
+
+## Exercises
+```{r querying_tables_questions, echo=F}
+#2. Write a query that returns the title of every film in which an actor with the first name JOHN appeared.
+dbListFields(conn = conn_mysql, name = 'city')
+dbListTables(conn = conn_mysql)
+dbGetQuery(conn = conn_mysql, 
+           statement = "SELECT f.title, a.first_name, a.last_name
+           FROM film AS f
+           INNER JOIN film_actor AS fa
+           ON f.film_id = fa.film_id
+           INNER JOIN actor AS a
+           ON fa.actor_id = a.actor_id
+           WHERE a.first_name = 'John'")
+
+#3. Construct a query that returns all addresses that are in the same city. You will need to join the address table to itself, and each row should include two different addresses.
+dbGetQuery(conn = conn_mysql, 
+           statement = "SELECT a1.address, a2.address, c.city
+           FROM address AS a1
+           INNER JOIN address AS a2
+           ON a1.city_id = a2.city_id AND
+           a1.address_id != a2.address_id
+           INNER JOIN city AS c
+           ON a1.city_id = c.city_id
+           ")
+
+#4. Find films in which both actors Cate McQueen and Cuba Birch appear 
+dbListFields(conn = conn_mysql, name = 'film_actor')
+#first, we find all rows in the film table that have at least two rows in the film_actor table
+dbGetQuery(conn = conn_mysql, 
+           statement = "SELECT f.title, a1.first_name, a1.last_name, a2.first_name, a2.last_name
+           FROM film AS f
+           INNER JOIN film_actor AS fa1
+           ON f.film_id = fa1.film_id  
+           INNER JOIN actor AS a1
+           ON fa1.actor_id = a1.actor_id
+           
+           INNER JOIN film_actor AS fa2
+           ON f.film_id = fa2.film_id
+           INNER JOIN actor AS a2
+           ON fa2.actor_id = a2.actor_id #produces all possible two-actor combinations for each film 
+           WHERE (a1.first_name = 'CATE' AND a1.last_name = 'MCQUEEN')
+           AND (a2.first_name = 'CUBA' AND a2.last_name = 'BIRCH')")
+```
+
+

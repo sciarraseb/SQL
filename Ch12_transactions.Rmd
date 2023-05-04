@@ -1,0 +1,155 @@
+---
+title: "Chapter 12: Transactions"
+header-includes:
+   - \usepackage{nccmath}
+   - \usepackage{caption}
+   - \usepackage{longtable}
+   - \usepackage{setspace}
+   - \usepackage{pdflscape}
+   - \usepackage{booktabs}
+   - \usepackage{longtable}
+   - \usepackage{array}
+   - \usepackage{multirow}
+   - \usepackage{wrapfig}
+   - \usepackage{float}
+   - \usepackage{colortbl}
+   - \usepackage{pdflscape}
+   - \usepackage{tabu}
+   - \usepackage{threeparttable}
+   - \usepackage{threeparttablex}
+   - \usepackage[normalem]{ulem}
+   - \usepackage{makecell}
+   - \usepackage{xcolor}
+   - \usepackage{amsthm}
+   - \newcommand{\blandscape}{\begin{landscape}}
+   - \newcommand{\elandscape}{\end{landscape}}
+   - \usepackage{upgreek}  #required for non-italicized Greek letters
+   - \usepackage{subcaption}
+   
+      #- \captionsetup[table]{textfont={it}, labelfont={bf}, singlelinecheck=false, labelsep=newline}
+   - \captionsetup[figure]{labelfont={normalfont, bf}, singlelinecheck=false, labelsep=newline}
+   
+   - \DeclareCaptionFont{figCaptionFont}{\fontfamily{phv}} #sets caption font to sans serif font of Helvetica 
+   - \DeclareCaptionFont{figCaptionSize}{\footnotesize} #set caption font size to footnote 
+   - \DeclareCaptionFont{figCaptionStyle}{\textup}  #set caption font to non-italicized font  
+   - \DeclareCaptionLabelSeparator{captionSep}{\newline\newline} #separates figure label and figure title with required white space
+   - \captionsetup[figure]{font = {figCaptionFont,figCaptionSize, figCaptionStyle}, labelsep = captionSep,  justification=justified}
+
+#setup for tables
+   - \captionsetup[table]{font = {figCaptionFont,figCaptionSize,figCaptionStyle}, labelfont={bf}, labelsep=captionSep, justification = raggedright, margin = {0cm,0cm}}
+   - \setlength\parindent{24pt}
+   
+format: "pandoc"
+output: pdf_document
+---
+
+```{r setup, include=F}
+knitr::opts_knit$set(root.dir = '~/Desktop/Datacamp/SQL')
+
+library(easypackages)
+packages_to_load <- c('tidyverse', 'RSQLite', 'dbplyr', 'DBI', 'odbc', 'RMySQL', 'reticulate', 'kableExtra', 'knitr', 'magick')
+packages(packages_to_load)
+
+reticulate::use_python(python = "/usr/local/msql/bin/")
+knitr::knit_engines$set(python.reticulate = FALSE)
+```
+
+```{r server_connection, echo=F}
+#set up connection with MySQL server; connect to meta data database
+conn_mysql <- dbConnect(drv = MySQL(), user = 'root', port = 3306, dbname = 'information_schema', password = 'tiramisu')
+
+dbGetQuery(conn = conn_mysql, statement = "USE sakila")
+#set up connection with SQLite server
+conn_sqlite <- dbConnect(RSQLite::SQLite(), 'professor_data/unitransparenz.sqlite')
+```
+
+# Chapter 12: Transactions
+
+### Locking 
+
+When using database systems, data can be read and modified. Although allowing many people to read data from a database is harmless, allowing many people to modify data at any given time
+point can cause many issues because data readers will not know what version of data they are downloading. One wayto navigate this issue is to only permit data reading after data
+modifications have been completed. Another way is to version data and only give licenses to modify data. 
+
+### Lock granularities
+
+Components ranging from tables, pages, and rows can be locked in a database. Note that convenience rises as smaller components are locked, but bookeeping demands increase. Do note that
+Oracle Database only used row locking
+
+## What is a transaction?
+
+Transactions are devices from grouping together multiple SQL statements such that either all or none of the statements are processed. This all-or-none procedure is important for functions that cannot risk being half computed (e.g., withdrawing 500$ from savings but it never gets deposited into checkings account). In SQL parlance, if any process goes awry, then
+the program issues a `rollback` to undo all the changes; if all processes are successfully computed, the program issues a `commit`. Transactions are crucial to maintaining the fidelity 
+a database when mutiple people are using it. The transaction below only updates the `avail_balance` value for a specific customer if only one cell was updated. 
+
+```{sql, echo=F}
+    START TRANSACTION;
+     /* withdraw money from first account, making sure balance is sufficient */
+    UPDATE account SET avail_balance = avail_balance - 500
+    WHERE account_id = 9988
+      AND avail_balance > 500;
+    IF <exactly one row was updated by the previous statement> THEN
+    /* deposit money into second account */
+      UPDATE account SET avail_balance = avail_balance + 500
+        WHERE account_id = 9989;
+      IF <exactly one row was updated by the previous statement> THEN
+        /* everything worked, make the changes permanent */
+        COMMIT;
+      ELSE
+        /* something went wrong, undo all changes in this transaction */
+        ROLLBACK;
+END IF; 
+ELSE
+      /* insufficient funds, or error encountered during update */
+      ROLLBACK;
+    END IF;
+   
+```
+
+### Starting a transaction
+
+In RDBMSs, transactions are either committed automatically computed (as in Oracle) or must be explicitly started (MySQL, Microsoft SQL). One downside of having to explicitly indicate
+transactions is that they cannot be reversed because the server is in `autocommit` model. To enable an Oracle-like functionality with respect to transactions, autocommit mode can be 
+disabled by `SET AUTOCOMMIT=0` in MySQL. When autocommit mode is disabled, all SQL commands must take place in a transaction or be explicitly committed. To prevent having to reconstruct
+data that you accidentally deleted, it is best to turn off autocommit mode and run all SQL statements within a transaction. 
+
+```{r autocommit_off, echo=F}
+
+dbGetQuery(conn = conn_mysql, statement = "SET AUTOCOMMIT=0")
+dbGetQuery(conn = conn_mysql, statement = "USE sakila")
+
+dbGetQuery(conn = conn_mysql, statement = "SELECT * FROM customer LIMIT 10")
+```
+
+### Ending a transaction
+
+Transactions must be ended by using a commit (instructs server to mark changes as permanent). To avoid 
+
+## Exercises 
+
+```{sql chapter_12_exercises, echo=F}
+
+ START TRANSACTION;
+     /* withdraw money from first account, making sure balance is sufficient */
+    UPDATE Account SET avail_balance = avail_balance - 50
+    WHERE account_id = 123
+      AND avail_balance > 50;
+    IF <exactly one row was updated by the previous statement> THEN
+    /* deposit money into second account */
+      UPDATE account SET avail_balance = avail_balance + 500
+        WHERE account_id = 9989;
+      IF <exactly one row was updated by the previous statement> THEN
+        /* everything worked, make the changes permanent */
+        COMMIT;
+      ELSE
+        /* something went wrong, undo all changes in this transaction */
+        ROLLBACK;
+END IF; 
+ELSE
+      /* insufficient funds, or error encountered during update */
+      ROLLBACK;
+    END IF;
+
+```
+
+

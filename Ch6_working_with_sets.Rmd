@@ -1,0 +1,146 @@
+---
+title: "Chapter 6: Working With Sets"
+header-includes:
+   - \usepackage{nccmath}
+   - \usepackage{caption}
+   - \usepackage{longtable}
+   - \usepackage{setspace}
+   - \usepackage{pdflscape}
+   - \usepackage{booktabs}
+   - \usepackage{longtable}
+   - \usepackage{array}
+   - \usepackage{multirow}
+   - \usepackage{wrapfig}
+   - \usepackage{float}
+   - \usepackage{colortbl}
+   - \usepackage{pdflscape}
+   - \usepackage{tabu}
+   - \usepackage{threeparttable}
+   - \usepackage{threeparttablex}
+   - \usepackage[normalem]{ulem}
+   - \usepackage{makecell}
+   - \usepackage{xcolor}
+   - \usepackage{amsthm}
+   - \newcommand{\blandscape}{\begin{landscape}}
+   - \newcommand{\elandscape}{\end{landscape}}
+   - \usepackage{upgreek}  #required for non-italicized Greek letters
+   - \usepackage{subcaption}
+   
+      #- \captionsetup[table]{textfont={it}, labelfont={bf}, singlelinecheck=false, labelsep=newline}
+   - \captionsetup[figure]{labelfont={normalfont, bf}, singlelinecheck=false, labelsep=newline}
+   
+   - \DeclareCaptionFont{figCaptionFont}{\fontfamily{phv}} #sets caption font to sans serif font of Helvetica 
+   - \DeclareCaptionFont{figCaptionSize}{\footnotesize} #set caption font size to footnote 
+   - \DeclareCaptionFont{figCaptionStyle}{\textup}  #set caption font to non-italicized font  
+   - \DeclareCaptionLabelSeparator{captionSep}{\newline\newline} #separates figure label and figure title with required white space
+   - \captionsetup[figure]{font = {figCaptionFont,figCaptionSize, figCaptionStyle}, labelsep = captionSep,  justification=justified}
+
+#setup for tables
+   - \captionsetup[table]{font = {figCaptionFont,figCaptionSize,figCaptionStyle}, labelfont={bf}, labelsep=captionSep, justification = raggedright, margin = {0cm,0cm}}
+   - \setlength\parindent{24pt}
+   
+format: "pandoc"
+output: pdf_document
+---
+
+```{r setup, include=F}
+knitr::opts_knit$set(root.dir = '~/Desktop/Datacamp/SQL')
+
+library(easypackages)
+packages_to_load <- c('tidyverse', 'RSQLite', 'dbplyr', 'DBI', 'odbc', 'RMySQL', 'reticulate', 'kableExtra', 'knitr', 'magick')
+packages(packages_to_load)
+
+reticulate::use_python(python = "/usr/local/msql/bin/")
+knitr::knit_engines$set(python.reticulate = FALSE)
+```
+
+```{r server_connection, echo=F}
+#set up connection with MySQL server; connect to meta data database
+conn_mysql <- dbConnect(drv = MySQL(), user = 'root', port = 3306, dbname = 'information_schema', password = 'tiramisu')
+
+dbGetQuery(conn = conn_mysql, statement = "USE sakila")
+#set up connection with SQLite server
+conn_sqlite <- dbConnect(RSQLite::SQLite(), 'professor_data/unitransparenz.sqlite')
+```
+# Chapter 6: Working with sets
+
+To perform set operations across two or more data sets, each data set must have the same number of rows and the data types of each column across the two data sets must be the same (or 
+the server must be able to convert one to the other). 
+
+## Set operators
+### The UNION operator
+
+Use `UNION` operator removes duplicates and the `UNION ALL` operator does not. The query below selects all the customer and actor names and creates a new column to track the type of 
+name (i.e., `CUST` OR `ACTR`). The second query performs the same computation, but only finds instances where the first and last names begin with 'J' and 'D', respectively. Note that,
+if the column delineating the type of observation was included in the second query, then there would be 5 rows instad of four because Jennifer Davis is a name contained in the `actor` and
+`customer` tables.
+
+```{r union_operator, echo=F}
+dbGetQuery(conn = conn_mysql, 
+           statement = "SELECT 'CUST' typ, c.first_name, c.last_name 
+           FROM customer AS c
+           UNION
+           SELECT 'ACTR' typ, a.first_name, a.last_name 
+           FROM actor AS a")
+
+dbGetQuery(conn = conn_mysql, 
+           statement = "SELECT c.first_name, c.last_name 
+           FROM customer AS c
+           WHERE c.first_name LIKE 'J%' AND c.last_name LIKE 'D%'
+           UNION
+           SELECT a.first_name, a.last_name 
+           FROM actor AS a
+           WHERE a.first_name LIKE 'J%' AND a.last_name LIKE 'D%'")
+```
+
+### The INTERSECT operator (INNER JOIN in MySQL)
+
+The `INTERSECT` operator has been discontinued and so more clever ways of computing it must be devised. The following query finds actor and customer names that exist in both tables and
+where the first name begins with 'J' and the last name begins with 'D'. 
+
+```{r pseudo_intersect, echo=F}
+dbGetQuery(conn = conn_mysql, 
+           statement = "SELECT a.first_name, a.last_name
+           FROM actor AS a
+           INNER JOIN customer AS c
+           ON a.first_name = c.first_name AND a.last_name = c.last_name
+           WHERE a.first_name LIKE 'J%' AND a.last_name LIKE 'D%' 
+           ")
+```
+
+### The EXCEPT operator (LEFT JOIN in MySQL)
+
+Like the `INTERSECT` operator, MySQL does not use the `EXCEPT` operator. In Oracle, the minus sign must be used. Nonetheless, workarounds can be generated to compute the `EXCEPT`
+operator, which returns observations unique to a result set. The below query finds names in the `actor` and `customer` tables where the first name begins with 'J' and the last name begins with 'D' that that are unique to the `actor` table.  
+
+```{r pseudo_intersect, echo=F}
+#query does not eliminate names in both tables
+dbGetQuery(conn = conn_mysql, 
+           statement = "SELECT a.first_name, a.last_name
+           FROM actor AS a
+           LEFT JOIN customer AS c 
+           ON a.first_name = c.first_name and a.last_name = c.last_name
+           WHERE (a.first_name LIKE 'J%' AND a.last_name LIKE 'D%')")
+
+```
+
+## Set operation rules
+
+You can only order by column names in the first query. Therefore, give the same alias names to column names in each query. 
+
+```{r sorting_compound_queries, echo=F}
+dbGetQuery(conn = conn_mysql, 
+           statement = "SELECT a.first_name AS fname, a.last_name AS lname
+           FROM actor AS a
+           WHERE a.first_name LIKE 'J%' AND a.last_name LIKE 'D%'
+           UNION
+           SELECT c.first_name AS fname, c.last_name AS lname
+           FROM customer AS c
+           WHERE c.first_name LIKE 'J%' AND c.last_name LIKE 'D%'
+           ORDER BY lname, fname")
+
+```
+
+## Set operation precedence
+
+
